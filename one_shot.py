@@ -4,6 +4,7 @@ import scg
 import sys
 from threading import Thread
 from multiprocessing import Pool, Process
+import matplotlib.pyplot as plt
 
 
 data_dim = 28*28
@@ -14,14 +15,21 @@ class GenerativeModel:
     def __init__(self, hidden_dim):
         self.hidden_dim = hidden_dim
 
+        # raw_data = np.load('data/train_small.npz')
+        # train_data = []
+        # for cl in raw_data.files:
+        #     train_data.append(raw_data[cl][None, :, :])
+        # train_data = np.concatenate(train_data, axis=0)
+
         self.prior = scg.Normal(50)
-        self.h1 = scg.Affine(50, 200, fun='tanh', init=scg.he_normal)
-        self.h2 = scg.Affine(200, 200, fun='tanh', init=scg.he_normal)
+        self.h1 = scg.Affine(50, 200, fun='prelu', init=scg.he_normal)
+        self.h2 = scg.Affine(200, 200, fun='prelu', init=scg.he_normal)
+        # self.bias = tf.Variable(train_data.mean(axis=0).mean(axis=0).astype(np.float32))
         self.logit = scg.Affine(200, data_dim, init=scg.he_normal)
 
-    def generate(self, hidden_name, observed_name, **params_input):
+    def generate(self, observed_name, hidden_name, **params_input):
         z = self.prior(name=hidden_name)
-        logit = self.logit(input=self.h2(input=self.h1(input=z, **params_input)))
+        logit = self.logit(input=self.h2(input=self.h1(input=z, **params_input)), name=observed_name + '_logit')
         return scg.Bernoulli()(logit=logit, name=observed_name)
 
 
@@ -29,8 +37,8 @@ class RecognitionModel:
     def __init__(self, hidden_dim):
         self.hidden_dim = hidden_dim
 
-        self.h1 = scg.Affine(data_dim, 200, fun='tanh', init=scg.he_normal)
-        self.h2 = scg.Affine(200, 200, fun='tanh', init=scg.he_normal)
+        self.h1 = scg.Affine(data_dim, 200, fun='prelu', init=scg.he_normal)
+        self.h2 = scg.Affine(200, 200, fun='prelu', init=scg.he_normal)
         self.mu = scg.Affine(200, 50, init=scg.he_normal)
         self.sigma = scg.Affine(200, 50, init=scg.he_normal)
 
@@ -65,7 +73,7 @@ class VAE:
 
             self.z.append(self.rec.recognize(current_data, VAE.observed_name(i),
                                              VAE.hidden_name(i)))
-            self.x.append(self.gen.generate(VAE.hidden_name(i), VAE.observed_name(i)))
+            self.x.append(self.gen.generate(VAE.observed_name(i), VAE.hidden_name(i)))
 
     def sample(self, cache=None):
         for i in xrange(episode_length):
@@ -103,7 +111,9 @@ avg_op = ema.apply([vlb])
 
 global_step = tf.Variable(0, trainable=False)
 learning_rate = tf.placeholder(tf.float32)
-opt_op = tf.train.AdamOptimizer(beta1=0.99, epsilon=1e-4, learning_rate=learning_rate, use_locking=False).minimize(-vlb, global_step=global_step)
+opt_op = tf.train.AdamOptimizer(epsilon=1e-4, learning_rate=learning_rate, use_locking=False).minimize(-vlb, global_step=global_step)
+
+gen_cache = vae.x[0].backtrace(batch=5)
 
 with tf.control_dependencies([opt_op]):
     train_op = tf.group(avg_op)
@@ -117,14 +127,6 @@ with tf.Session() as sess:
         for j in xrange(batch.shape[0]):
             batch[j] = data[np.random.choice(data.shape[0], 10),
                             np.random.choice(data.shape[1], 10)]
-        # for j in xrange(batch.shape[0]):
-        #     classes = np.random.choice(data.files, 10)
-        #     offset = 0
-        #     for cl in classes:
-        #         # np.random.shuffle(data[cl])
-        #         bulk_length = 1
-        #         batch[j, offset:offset + bulk_length] = data[cl][:bulk_length]
-        #         offset += bulk_length
 
         np.true_divide(batch, 255., out=batch, casting='unsafe')
         sess.run(enqueue_op, feed_dict={new_data: batch})
@@ -156,13 +158,22 @@ with tf.Session() as sess:
 
     # train_data = np.load('data/train_small.npz')
 
-    for epochs, lr in zip([500, 500, 500], [1e-3, 3e-4, 1e-4]):
+    log_file = open('log.txt', 'w')
+    for epochs, lr in zip([900, 900, 900], [1e-3, 3e-4, 1e-4]):
         for epoch in xrange(epochs):
             for batch in xrange(24345 / batch_size / episode_length):
                 lb, i, _ = sess.run([avg_vlb, global_step, train_op],
                                     feed_dict={learning_rate: lr})
 
                 sys.stdout.write('\repoch {0}, batch {1}, lower bound: {2}'.format(epoch, i, lb))
+                log_file.write('\repoch {0}, batch {1}, lower bound: {2}'.format(epoch, i, lb))
+                log_file.flush()
+
+                if np.random.rand() < 0.003:
+                    sample = sess.run(gen_cache['x_0_logit'])
+                    plt.imshow(sample.reshape(28 * 5, 28))
+                    plt.savefig('samples.png')
             print '' \
 
+    log_file.close()
     coord.request_stop()
