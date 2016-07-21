@@ -59,6 +59,10 @@ class NodePrototype:
 
         return Node(name, self, input_nodes)
 
+    @property
+    def variables(self):
+        return []
+
 
 class StochasticPrototype(NodePrototype):
     def __init__(self):

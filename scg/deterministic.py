@@ -85,10 +85,14 @@ class Affine(NodePrototype):
             return y
 
         args = {}
-        if self.fun == 'relu':
+        if self.fun == 'prelu':
             args['p'] = p if p is not None else self.p
 
         return dispatch_function(y, self.fun, **args)
+
+    @property
+    def variables(self):
+        return [self.A, self.b] + [self.p] if self.fun == 'prelu' else []
 
 
 class Concat(NodePrototype):
@@ -139,3 +143,14 @@ def split(node, num_splits):
 
         def flow(self, input=None):
             assert input is not None
+
+
+class Reshape(NodePrototype):
+    def __init__(self, shape):
+        NodePrototype.__init__(self)
+        self.shape = shape
+
+    def flow(self, input=None):
+        assert input is not None
+        sh = tf.shape(input)
+        return tf.reshape(input, tf.pack([sh[0]] + self.shape))

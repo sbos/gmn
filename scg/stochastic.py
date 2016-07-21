@@ -31,7 +31,7 @@ class Normal(StochasticPrototype):
         if pre_sigma is None:
             sigma = tf.ones((self.size,))
         else:
-            sigma = tf.nn.softplus(pre_sigma)
+            sigma = tf.nn.softplus(tf.clip_by_value(pre_sigma, -10, 10))
 
         return mu, sigma
 

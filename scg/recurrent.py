@@ -27,3 +27,7 @@ class RNN(NodePrototype):
 
         return dispatch_function(h, fun=self.fun, **args)
 
+    @property
+    def variables(self):
+        return [self.Wxh, self.Whh, self.b] + [self.p] if self.fun == 'prelu' else []
+
