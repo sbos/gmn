@@ -49,10 +49,10 @@ class RecognitionModel:
 
 class ParamRecognition:
     def __init__(self, state_dim):
-        self.rnn = scg.RNN(data_dim, state_dim, fun='prelu', init=scg.he_normal)
+        self.cell = scg.GRU(data_dim, state_dim, fun='prelu', init=scg.he_normal)
 
     def update(self, state, obs):
-        state = self.rnn(input=obs, state=state)
+        state = self.cell(input=obs, state=state)
         return state
 
 
@@ -232,7 +232,7 @@ with tf.Session() as sess:
         import numpy as np
 
         for j in xrange(batch.shape[0]):
-            random_classes = np.random.choice(data.shape[0], 1)
+            random_classes = np.random.choice(data.shape[0], 2)
             classes = np.random.choice(random_classes, batch.shape[1])
             batch[j] = data[classes, np.random.choice(data.shape[1], batch.shape[1])]
 
