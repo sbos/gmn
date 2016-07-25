@@ -31,7 +31,7 @@ class Node:
             input_values[channel_name] = cache[node.name]
 
         for input_name, value in inputs.iteritems():
-            assert input_name not in input_values
+            # assert input_name not in input_values
             if input_name in self.prototype.flow.func_code.co_varnames:
                 input_values[input_name] = value
 
@@ -91,7 +91,7 @@ class StochasticPrototype(NodePrototype):
         return x
 
 
-def likelihood(node, cache=None, ll=None):
+def likelihood(node, cache=None, ll=None, **more_inputs):
     if ll is None:
         ll = {}
 
@@ -99,6 +99,15 @@ def likelihood(node, cache=None, ll=None):
         if isinstance(current_node.prototype, StochasticPrototype):
             ll[current_node.name] = current_node.prototype.likelihood(value, **inputs)
 
-    node.backtrace(cache, callback=likelihood_callback)
+    node.backtrace(cache, callback=likelihood_callback, **more_inputs)
 
     return ll
+
+
+class StealBatch(NodePrototype):
+    def __init__(self):
+        NodePrototype.__init__(self)
+
+    def flow(self, input=None):
+        assert input is not None
+        return tf.shape(input)[0]

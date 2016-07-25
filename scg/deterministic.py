@@ -127,13 +127,15 @@ class Constant(NodePrototype):
 
 
 class BatchRepeat(NodePrototype):
-    def __init__(self, batch):
+    def __init__(self, batch=None):
         NodePrototype.__init__(self)
         self.batch = batch
 
-    def flow(self, input=None):
+    def flow(self, input=None, batch=None):
         assert input is not None
-        return tf.tile(input, [self.batch, 1])
+        if batch is None:
+            batch = self.batch
+        return tf.tile(input, tf.pack([batch, 1]))
 
 
 def split(node, num_splits):
