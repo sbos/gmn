@@ -135,7 +135,12 @@ class BatchRepeat(NodePrototype):
         assert input is not None
         if batch is None:
             batch = self.batch
-        return tf.tile(input, tf.pack([batch, 1]))
+        input = tf.expand_dims(input, 0)
+        shape = tf.unpack(tf.shape(input))
+        shape[0] = batch
+        for i in xrange(1, len(shape)):
+            shape[i] = 1
+        return tf.tile(input, tf.pack(shape))
 
 
 def split(node, num_splits):
@@ -156,3 +161,46 @@ class Reshape(NodePrototype):
         assert input is not None
         sh = tf.shape(input)
         return tf.reshape(input, tf.pack([sh[0]] + self.shape))
+
+
+class Add(NodePrototype):
+    def __init__(self, mul=1.):
+        NodePrototype.__init__(self)
+        self.mul = mul
+
+    def flow(self, a=None, b=None):
+        assert a is not None
+        assert b is not None
+        return a + b * self.mul
+
+
+def add(a, b, mul=1.):
+    return Add(mul)(a=a, b=b)
+
+
+class Multiply(NodePrototype):
+    def __init__(self):
+        NodePrototype.__init__(self)
+
+    def flow(self, a=None, b=None):
+        assert a is not None
+        assert b is not None
+        return a * b
+
+
+def multiply(a, b):
+    return Multiply()(a=a, b=b)
+
+
+class DictExtractor(NodePrototype):
+    def __init__(self, key):
+        NodePrototype.__init__(self)
+        self.key = key
+
+    def flow(self, input=None):
+        assert input is not None
+        return input[self.key]
+
+
+def by_key(input, key):
+    return DictExtractor(key)(input=input)
