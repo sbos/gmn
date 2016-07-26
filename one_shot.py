@@ -18,13 +18,14 @@ class GenerativeModel:
         self.prior = scg.Normal(self.hidden_dim)
 
         self.h1 = scg.Affine(hidden_dim + state_dim, 100, fun='prelu', init=scg.he_normal)
-        # self.h2 = scg.Affine(200, 200, fun='prelu', init=scg.he_normal)
+        #self.h2 = scg.Affine(100 + state_dim, 100, fun='tanh', init=scg.he_normal)
         self.logit = scg.Affine(100, data_dim, init=scg.he_normal)
 
     def generate(self, state, observed_name, hidden_name):
         z = self.prior(name=hidden_name)
         # h = self.h1(input=state)
         h = self.h1(input=scg.Concat()(a=z, b=state))
+        #h = self.h2(input=scg.Concat()(a=h, b=state))
         logit = self.logit(input=h, name=observed_name + '_logit')
         return scg.Bernoulli()(logit=logit, name=observed_name)
 
@@ -34,15 +35,17 @@ class RecognitionModel:
         self.hidden_dim = hidden_dim
         self.state_dim = state_dim
 
-        self.h = scg.Affine(state_dim + data_dim, 100, fun='prelu', init=scg.he_normal)
-        self.mu = scg.Affine(100, 50, init=scg.he_normal)
-        self.sigma = scg.Affine(100, 50, init=scg.he_normal)
+        self.h1 = scg.Affine(state_dim + data_dim, 100, fun='prelu', init=scg.he_normal)
+        #self.h2 = scg.Affine(100 + state_dim, 100, fun='tanh', init=scg.he_normal)
+        self.mu = scg.Affine(100, hidden_dim, init=scg.he_normal)
+        self.sigma = scg.Affine(100, hidden_dim, init=scg.he_normal)
 
     def recognize(self, obs, state, hidden_name):
-        h = self.h(input=scg.Concat()(a=obs, b=state))
+        h = self.h1(input=scg.Concat()(a=obs, b=state))
+        #h = self.h2(input=scg.Concat()(a=h, b=state))
         mu = self.mu(input=h)
         sigma = self.sigma(input=h)
-        z = scg.Normal(50)(mu=mu, pre_sigma=sigma, name=hidden_name)
+        z = scg.Normal(self.hidden_dim)(mu=mu, pre_sigma=sigma, name=hidden_name)
         return z
 
 
@@ -218,7 +221,7 @@ batch_size = 20
 input_data = data_queue.dequeue_many(batch_size)
 binarized = tf.cast(tf.less_equal(tf.random_uniform(tf.shape(input_data)), input_data), tf.float32)
 
-vae = VAE(binarized, 50, GenerativeModel, RecognitionModel, ParamRecognition)
+vae = VAE(binarized, 20, GenerativeModel, RecognitionModel, ParamRecognition)
 train_samples = vae.sample(None)
 weights = vae.importance_weights(train_samples)
 
@@ -304,7 +307,7 @@ with tf.Session() as sess:
 
     def test():
         print
-        test_data = load_data('data/test_small.npz')
+        test_data = load_data('data/test_small_aug4.npz')
         avg_pred_ll = np.zeros(episode_length)
         batch = np.zeros((batch_size, episode_length, data_dim), dtype=np.float32)
         for j in xrange(1000):
@@ -331,10 +334,10 @@ with tf.Session() as sess:
 
                 if np.random.rand() < 0.003:
                     sample = sess.run(train_samples['x_2_0_logit'])
-                    plt.imshow(sample.reshape(28 * 20, 28))
+                    plt.matshow(sample.reshape(28 * 20, 28))
                     plt.savefig('samples.png')
 
-                if epoch % 50 == 0 and batch == 0:
+                if epoch % 20 == 0 and batch == 0:
                     test()
             print '' \
 
