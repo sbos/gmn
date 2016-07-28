@@ -96,19 +96,20 @@ class Affine(NodePrototype):
 
 
 class Concat(NodePrototype):
-    def __init__(self):
+    def __init__(self, index=1):
         NodePrototype.__init__(self)
+        self.index = index
 
     def flow(self, **inputs):
         values = [value for value in inputs.itervalues()]
-        return tf.concat(1, values)
+        return tf.concat(self.index, values)
 
 
-def concat(*inputs):
+def concat(inputs, index=1):
     input_dict = dict()
     for i in xrange(len(inputs)):
         input_dict['concat_' + str(i)] = inputs[i]
-    return Concat()(**input_dict)
+    return Concat(index)(**input_dict)
 
 
 class Slice(NodePrototype):
@@ -121,6 +122,35 @@ class Slice(NodePrototype):
     def flow(self, input=None):
         assert input is not None
         return tf.slice(input, [0, self.start], [-1, self.size])
+
+
+def slice(input, start, size):
+    return Slice(start, size)(input)
+
+
+def apply(f, **inputs):
+    class Apply(NodePrototype):
+        def __init__(self):
+            NodePrototype.__init__(self)
+
+        def flow(self, **inputs):
+            return f(**inputs)
+    return Apply()(**inputs)
+
+
+class Pack(NodePrototype):
+    def __init__(self):
+        NodePrototype.__init__(self)
+
+    def flow(self, **inputs):
+        return tf.pack([input for input in inputs.itervalues()])
+
+
+def pack(*inputs):
+    input_dict = dict()
+    for i in xrange(len(inputs)):
+        input_dict['pack_' + str(i)] = inputs[i]
+    return Pack()(**input_dict)
 
 
 class Constant(NodePrototype):

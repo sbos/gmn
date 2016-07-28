@@ -56,6 +56,8 @@ class NodePrototype:
     def __call__(self, name=None, **input_nodes):
         if name is None:
             name = id_generator()
+        elif not isinstance(name, str):
+            raise Exception('Wrong name, must be a string')
 
         return Node(name, self, input_nodes)
 

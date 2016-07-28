@@ -19,36 +19,35 @@ episode_length = args.episode
 
 
 class GenerativeModel:
-    def __init__(self, hidden_dim, state_dim):
+    def __init__(self, hidden_dim):
         self.hidden_dim = hidden_dim
-        self.state_dim = state_dim
 
         self.prior = scg.Normal(self.hidden_dim)
 
-        self.h1 = scg.Affine(hidden_dim + state_dim, 200, fun='prelu', init=scg.he_normal)
+        self.h1 = scg.Affine(hidden_dim, 200, fun='prelu', init=scg.he_normal)
         self.h2 = scg.Affine(200, 200, fun='prelu', init=scg.he_normal)
         self.logit = scg.Affine(200, data_dim, init=scg.he_normal)
 
-    def generate(self, state, observed_name, hidden_name):
+    def generate(self, observed_name, hidden_name):
         z = self.prior(name=hidden_name)
-        h = self.h1(input=scg.concat(z, state))
+        h = self.h1(input=z)
         h = self.h2(input=h)
         logit = self.logit(input=h, name=observed_name + '_logit')
         return scg.Bernoulli()(logit=logit, name=observed_name)
 
 
 class RecognitionModel:
-    def __init__(self, hidden_dim, state_dim):
+    def __init__(self, hidden_dim, param_dim):
         self.hidden_dim = hidden_dim
-        self.state_dim = state_dim
+        self.param_dim = param_dim
 
-        self.h1 = scg.Affine(data_dim + state_dim, 200, fun='prelu', init=scg.he_normal)
+        self.h1 = scg.Affine(data_dim + param_dim, 200, fun='prelu', init=scg.he_normal)
         self.h2 = scg.Affine(200, 200, fun='prelu', init=scg.he_normal)
         self.mu = scg.Affine(200, hidden_dim, init=scg.he_normal)
         self.sigma = scg.Affine(200, hidden_dim, init=scg.he_normal)
 
-    def recognize(self, obs, state, hidden_name):
-        h = self.h1(input=scg.concat(obs, state))
+    def recognize(self, obs, param, hidden_name):
+        h = self.h1(input=scg.concat([obs, param]))
         h = self.h2(input=h)
         mu = self.mu(input=h)
         sigma = self.sigma(input=h)
@@ -57,12 +56,61 @@ class RecognitionModel:
 
 
 class ParamRecognition:
-    def __init__(self, state_dim):
+    def __init__(self, state_dim, feature_dim=100, param_dim=100):
+        self.feature_dim = feature_dim
+        self.param_dim = param_dim
+
         self.cell = scg.GRU(data_dim, state_dim, fun='prelu', init=scg.he_normal)
+        # self.img_features = scg.Affine(data_dim, feature_dim, fun='prelu', init=scg.he_normal)
+        # self.source_encoder = scg.Affine(feature_dim + state_dim, param_dim,
+        #                                  fun='prelu', init=scg.he_normal)
+        # self.query_encoder = scg.Affine(feature_dim + state_dim, param_dim,
+        #                                 fun='prelu', init=scg.he_normal)
+
+        self.source_encoder = scg.Affine(data_dim + state_dim, param_dim,
+                                         fun='prelu', init=scg.he_normal)
+        self.query_encoder = scg.Affine(data_dim + state_dim, param_dim,
+                                        fun='prelu', init=scg.he_normal)
 
     def update(self, state, obs):
         state = self.cell(input=obs, state=state)
         return state
+
+    def encode_source(self, state, obs):
+        # features = self.img_features(input=obs)
+        features = obs
+        return features, self.source_encoder(input=scg.concat([features, state]))
+
+    def encode_query(self, state, obs):
+        # features = self.img_features(input=obs)
+        features = obs
+        return self.query_encoder(input=scg.concat([features, state]))
+
+    def build_memory(self, state, observations, time_step):
+        if time_step == 0:
+            return None
+
+        sources = [None] * time_step
+        features = [None] * time_step
+        for i in xrange(time_step):
+            features[i], sources[i] = self.encode_source(state, observations[i])
+
+            def transform(input=None):
+                return tf.expand_dims(input, 1)
+
+            features[i] = scg.apply(transform, input=features[i])
+            sources[i] = scg.apply(transform, input=sources[i])
+        features, sources = scg.concat(features, 1), scg.concat(sources, 1)
+        return sources
+
+    def query(self, sources, state, obs):
+        if sources is None:
+            return scg.BatchRepeat()(input=scg.Constant(tf.zeros([self.param_dim]))(),
+                                     batch=scg.StealBatch()(input=state))
+
+        query = self.encode_query(state, obs)
+        attention = scg.Attention()(mem=sources, key=query)
+        return scg.AttentiveReader()(attention=attention, mem=sources)
 
 
 class VAE:
@@ -79,37 +127,30 @@ class VAE:
         return 'theta_' + str(step)
 
     def __init__(self, input_data, hidden_dim, gen, rec, par=None):
-        state_dim = 512
+        state_dim = 100
+        param_dim = 100
+        feature_dim = 100
 
         with tf.variable_scope('both') as vs:
-            self.init_state = scg.Constant(tf.Variable(tf.zeros((2 * state_dim,))))()
+            self.init_state = scg.Constant(tf.Variable(tf.zeros((state_dim,))))()
             self.both_vars = [var for var in tf.all_variables() if var.name.startswith(vs.name)]
 
         with tf.variable_scope('generation') as vs:
-            self.gen = gen(hidden_dim, state_dim)
-
-            self.params_gen = []
-            for i in xrange(episode_length+1):
-                mu = scg.Slice(0, state_dim)(input=self.init_state)
-                pre_sigma = scg.Slice(state_dim, state_dim)(input=self.init_state)
-                self.params_gen.append(scg.Normal(state_dim)(mu=mu, pre_sigma=pre_sigma,
-                                                             name=VAE.params_name(i)))
+            self.gen = gen(hidden_dim)
 
             self.gen_vars = self.both_vars + [var for var in tf.all_variables() if var.name.startswith(vs.name)]
 
         with tf.variable_scope('recognition') as vs:
-            self.rec = rec(hidden_dim, state_dim)
+            self.rec = rec(hidden_dim, param_dim)
             self.par = par
 
             if par is not None:
-                self.par = par(2 * state_dim)
+                self.par = par(state_dim, feature_dim, param_dim)
 
             self.rec_vars = self.both_vars + [var for var in tf.all_variables() if var.name.startswith(vs.name)]
 
         self.z = []
         self.x = []
-
-        self.params_rec = []
 
         # allocating observations
         self.obs = [None] * (episode_length+1)
@@ -122,21 +163,18 @@ class VAE:
         state = scg.BatchRepeat()(batch=scg.StealBatch()(input=self.obs[0][0]),
                                   input=self.init_state)
         for timestep in xrange(episode_length+1):
-            mu = scg.Slice(0, state_dim)(input=state)
-            pre_sigma = scg.Slice(state_dim, state_dim)(input=state)
-            state_sample = scg.Normal(state_dim)(mu=mu, pre_sigma=pre_sigma,
-                                                 name=VAE.params_name(timestep))
-            self.params_rec.append(state_sample)
-
             self.z.append([])
             self.x.append([])
 
+            sources = self.par.build_memory(state, self.obs[timestep], timestep)
+
             for j in xrange(min(timestep+1, episode_length)):
+                param = self.par.query(sources, state, self.obs[timestep][j])
+
                 self.z[timestep].append(self.rec.recognize(self.obs[timestep][j],
-                                                           state_sample,
+                                                           state,
                                                            VAE.hidden_name(timestep, j)))
-                self.x[timestep].append(self.gen.generate(state_sample,
-                                                          VAE.observed_name(timestep, j),
+                self.x[timestep].append(self.gen.generate(VAE.observed_name(timestep, j),
                                                           VAE.hidden_name(timestep, j)))
 
             if self.par is not None and timestep < episode_length:
@@ -154,18 +192,12 @@ class VAE:
         rec_ll = {}
 
         # weights[t][i] -- likelihood ratio for the i-th object after t objects has been seen
-        weights = [None] * (episode_length+1)
-        param_weights = [None] * (episode_length+1)
+        weights = [0.] * (episode_length+1)
 
         for i in xrange(episode_length+1):
             for j in xrange(0, min(i+1, episode_length)):
                 scg.likelihood(self.z[i][j], cache, rec_ll)
                 scg.likelihood(self.x[i][j], cache, gen_ll)
-
-            if i > 0:
-                param_weights[i] = gen_ll[VAE.params_name(i)] - rec_ll[VAE.params_name(i)]
-            else:
-                param_weights[i] = tf.zeros(tf.shape(gen_ll[VAE.observed_name(i, 0)]))
 
             weights[i] = [None] * episode_length
 
@@ -176,19 +208,15 @@ class VAE:
             for j in xrange(i+1, episode_length):
                 weights[i][j] = tf.zeros(tf.shape(weights[i][0]))
 
-        param_weights = tf.pack(param_weights)
         weights = tf.pack(weights)
 
-        return param_weights, weights
+        return weights
 
-    def lower_bound(self, param_weights, weights, randomize=True):
+    def lower_bound(self, weights, randomize=True):
         vlb_gen = [0.] * episode_length
         vlb_rec = [0.] * episode_length
 
         for i in xrange(episode_length):
-            vlb_gen[i] += tf.reduce_mean(param_weights[i+1, :])
-            vlb_rec[i] += tf.reduce_mean(param_weights[i, :])
-
             vlb_gen[i] += tf.reduce_sum(tf.reduce_mean(weights[i+1, :i+1, :], [1]))
             vlb_rec[i] += tf.reduce_sum(tf.reduce_mean(weights[i, :i+1, :], [1]))
 
@@ -204,22 +232,11 @@ class VAE:
 
         return vlb_gen, vlb_rec
 
-    def predictive_lb(self, param_weights, weights):
+    def predictive_lb(self, weights):
         ll = [0. for i in xrange(episode_length)]
 
         for i in xrange(len(ll)):
             ll[i] += tf.reduce_mean(weights[i, i, :])
-
-        return tf.pack(ll)
-
-    def predictive_likelihood(self, weights):
-        ll = [None] * episode_length
-
-        for i in xrange(len(ll)):
-            w_i = weights[i, i, :]
-            max_w = tf.reduce_max(w_i)
-            ll[i] = tf.log(tf.reduce_sum(tf.exp(w_i - max_w))) - tf.log(tf.cast(tf.shape(w_i)[0], tf.float32)) \
-                    + max_w
 
         return tf.pack(ll)
 
@@ -247,10 +264,9 @@ weights = vae.importance_weights(train_samples)
 test_samples = vae.sample(None)
 test_weights = vae.importance_weights(test_samples)
 
-train_pred_ll = vae.predictive_lb(*weights)
-test_pred_ll = vae.predictive_likelihood(test_weights[1])
+train_pred_ll = vae.predictive_lb(weights)
 
-vlb_gen, vlb_rec = vae.lower_bound(*weights, randomize=False)
+vlb_gen, vlb_rec = vae.lower_bound(weights, randomize=False)
 
 ema = tf.train.ExponentialMovingAverage(0.99)
 avg_op = ema.apply([vlb_gen, train_pred_ll])
@@ -261,8 +277,8 @@ learning_rate = tf.placeholder(tf.float32)
 epoch_passed = tf.Variable(0)
 increment_passed = epoch_passed.assign_add(1)
 
-vars_losses = zip([vae.gen_vars, vae.rec_vars], [-vlb_gen, -vlb_rec])
-#vars_losses = zip([vae.gen_vars + vae.rec_vars], [-vlb_gen])
+#vars_losses = zip([vae.gen_vars, vae.rec_vars], [-vlb_gen, -vlb_rec])
+vars_losses = zip([vae.gen_vars + vae.rec_vars], [-vlb_gen])
 
 
 def grads_and_vars(vars_and_losses):
@@ -323,7 +339,7 @@ with tf.Session() as sess:
             sess.run(enqueue_op, feed_dict={new_data: batch})
 
     coord = tf.train.Coordinator()
-    if os.path.exists(args.checkpoint):
+    if args.checkpoint is not None and os.path.exists(args.checkpoint):
         saver.restore(sess, args.checkpoint)
     else:
         sess.run(tf.initialize_all_variables())
@@ -350,7 +366,7 @@ with tf.Session() as sess:
     num_epochs = 0
     done_epochs = epoch_passed.eval(sess)
     log_file = open('log.txt', 'w')
-    for epochs, lr in zip([100, 100, 100], [1e-3, 3e-4, 1e-4]):
+    for epochs, lr in zip([150, 150, 150], [1e-3, 3e-4, 1e-4]):
         for epoch in xrange(epochs):
             if num_epochs < done_epochs:
                 num_epochs += 1
@@ -372,7 +388,8 @@ with tf.Session() as sess:
                 if np.random.rand() < 0.01:
                     sample, original = sess.run([reconstructions, original_input])
                     plt.matshow(np.hstack([sample.reshape(28 * episode_length, 28),
-                                           original.reshape(28 * episode_length, 28)]))
+                                           original.reshape(28 * episode_length, 28)]),
+                                cmap=plt.get_cmap('Greys'))
                     plt.savefig('samples.png')
                     plt.close()
 
@@ -380,7 +397,7 @@ with tf.Session() as sess:
             print 'time for epoch: %f' % (time.time() - epoch_started)
 
             sess.run(increment_passed)
-            if epoch % 10 == 0:
+            if epoch % 10 == 0 and args.checkpoint is not None:
                 saver.save(sess, args.checkpoint)
 
             if epoch % 20 == 0 and epoch > 0:

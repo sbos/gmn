@@ -64,82 +64,40 @@ class GRU(NodePrototype):
         return u * state + (1 - u) * c
 
 
-class NTM(NodePrototype):
-    def __init__(self, input_size, cell_size, num_cells, controller_size=512,
-                 num_reads=2, num_writes=1, use_decay=0.99):
+class Attention(NodePrototype):
+    def __init__(self, strength=1.):
         NodePrototype.__init__(self)
-        self.cell_size = cell_size
-        self.num_cells = num_cells
-        self.controller_size = controller_size
+        self.strength = strength
 
-        self.controller = GRU(input_size, controller_size)
-        self.use_decay = use_decay
+    def flow(self, mem=None, key=None, strength=None):
+        assert mem is not None
+        assert key is not None
+        if strength is None:
+            strength = self.strength
 
-        class Reader:
-            def __init__(self):
-                self.read_key = Affine(input_size + controller_size, cell_size,
-                                       fun='tanh')()
-
-            def read(self, controller_state, input, mem, strength=1.):
-                key = self.read_key.flow(input=tf.concat(0, controller_state, input))
-                return NTM.content_focus(key, mem, strength)
-
-        class Writer:
-            def __init__(self):
-                self.write_key = Affine(input_size + controller_size, cell_size, fun='tanh')()
-                self.write_gate = Affine(input_size + controller_size, 1, fun='sigmoid')()
-
-            def write(self, controller_state, input, mem, w_r, w_lu):
-                input = tf.concat(0, controller_state, input)
-                key = tf.expand_dims(self.write_key.flow(input=input), 1)
-                gate = self.write_gate.flow(input=input)
-
-                weights = tf.expand_dims(gate * w_r + (1 - gate) * w_lu, 1)
-                mem_updated = mem + tf.transpose(tf.batch_matmul(key, weights, adj_x=True))
-
-                return weights, mem_updated
-
-        self.readers = map(lambda _: Reader(), xrange(num_reads))
-        self.writers = map(lambda _: Writer(), xrange(num_writes))
-
-
-    def initial_memory(self):
-        return tf.zeros(tf.pack([self.num_cells, self.cell_size]))
-
-    @staticmethod
-    def content_focus(key, mem, strength=1.):
         key_norm = tf.sqrt(tf.reduce_sum(tf.square(key), [1]))
         # shape = batch x num_cells
         mem_norm = tf.sqrt(tf.reduce_sum(tf.square(mem), [2]))
         # shape = batch x num_cells
-        sim = tf.squeeze(tf.batch_matmul(tf.expand_dims(key, 1), mem, adj_y=True))
-        sim /= mem_norm
-        sim = tf.transpose(tf.transpose(sim) / key_norm)
+        sim = tf.batch_matmul(tf.expand_dims(key, 1), mem, adj_y=True)
+        sim = tf.squeeze(sim, [1])
+        sim = tf.transpose(sim)
+        sim /= tf.transpose(mem_norm)
+        sim /= tf.transpose(key_norm)
+        sim = tf.transpose(sim)
+        max_sim = tf.reduce_max(sim, 1)
+        sim = tf.transpose(tf.transpose(sim) - tf.transpose(max_sim))
         sim = tf.exp(sim * strength)
         sim_sum = tf.reduce_sum(sim, [1])
         return tf.transpose(tf.transpose(sim) / sim_sum)
 
-    @staticmethod
-    def retrieve(weights, mem):
-        return tf.batch_matmul(tf.expand_dims(weights, 1), mem, adj_y=True)
 
-    def flow(self, state=None, mem=None, input=None, use_weights=None):
-        assert state is not None
+class AttentiveReader(NodePrototype):
+    def __init__(self):
+        NodePrototype.__init__(self)
+
+    def flow(self, attention=None, mem=None):
+        assert attention is not None
         assert mem is not None
-        assert input is not None
 
-        w_r = 0.
-        reads = []
-        for reader in self.readers:
-            loc = reader.read(state, input, mem)
-            w_r += loc / len(self.readers)
-            reads.append(NTM.retrieve(loc, mem))
-        reads = tf.concat(0, reads)
-
-        min_weight = tf.squeeze(-tf.nn.top_k(-use_weights, len(self.readers))[0][:, 0])
-        w_lu = tf.cast(tf.less_equal(use_weights, min_weight), tf.float32)
-
-        w_w = 0
-
-        new_state = dict()
-        new_state['use_weights'] = self.use_decay * use_weights + w_r + w_w
+        return tf.squeeze(tf.batch_matmul(tf.expand_dims(attention, 1), mem))
