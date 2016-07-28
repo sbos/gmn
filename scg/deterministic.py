@@ -104,6 +104,13 @@ class Concat(NodePrototype):
         return tf.concat(1, values)
 
 
+def concat(*inputs):
+    input_dict = dict()
+    for i in xrange(len(inputs)):
+        input_dict['concat_' + str(i)] = inputs[i]
+    return Concat()(**input_dict)
+
+
 class Slice(NodePrototype):
     def __init__(self, start, size):
         NodePrototype.__init__(self)
@@ -175,7 +182,7 @@ class Add(NodePrototype):
 
 
 def add(a, b, mul=1.):
-    return Add(mul)(a=a, b=b)
+    return Add(mul=mul)(a=a, b=b)
 
 
 class Multiply(NodePrototype):

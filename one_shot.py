@@ -4,10 +4,18 @@ import scg
 import sys
 from threading import Thread
 import matplotlib.pyplot as plt
+import time
+import argparse
+import os
 
+parser = argparse.ArgumentParser()
+parser.add_argument('--episode', type=int, default=10)
+parser.add_argument('--checkpoint', type=str, default=None)
+parser.add_argument('--hidden_dim', type=int, default=50)
+args = parser.parse_args()
 
 data_dim = 28*28
-episode_length = 10
+episode_length = args.episode
 
 
 class GenerativeModel:
@@ -17,15 +25,14 @@ class GenerativeModel:
 
         self.prior = scg.Normal(self.hidden_dim)
 
-        self.h1 = scg.Affine(hidden_dim + state_dim, 100, fun='prelu', init=scg.he_normal)
-        #self.h2 = scg.Affine(100 + state_dim, 100, fun='tanh', init=scg.he_normal)
-        self.logit = scg.Affine(100, data_dim, init=scg.he_normal)
+        self.h1 = scg.Affine(hidden_dim + state_dim, 200, fun='prelu', init=scg.he_normal)
+        self.h2 = scg.Affine(200, 200, fun='prelu', init=scg.he_normal)
+        self.logit = scg.Affine(200, data_dim, init=scg.he_normal)
 
     def generate(self, state, observed_name, hidden_name):
         z = self.prior(name=hidden_name)
-        # h = self.h1(input=state)
-        h = self.h1(input=scg.Concat()(a=z, b=state))
-        #h = self.h2(input=scg.Concat()(a=h, b=state))
+        h = self.h1(input=scg.concat(z, state))
+        h = self.h2(input=h)
         logit = self.logit(input=h, name=observed_name + '_logit')
         return scg.Bernoulli()(logit=logit, name=observed_name)
 
@@ -35,14 +42,14 @@ class RecognitionModel:
         self.hidden_dim = hidden_dim
         self.state_dim = state_dim
 
-        self.h1 = scg.Affine(state_dim + data_dim, 100, fun='prelu', init=scg.he_normal)
-        #self.h2 = scg.Affine(100 + state_dim, 100, fun='tanh', init=scg.he_normal)
-        self.mu = scg.Affine(100, hidden_dim, init=scg.he_normal)
-        self.sigma = scg.Affine(100, hidden_dim, init=scg.he_normal)
+        self.h1 = scg.Affine(data_dim + state_dim, 200, fun='prelu', init=scg.he_normal)
+        self.h2 = scg.Affine(200, 200, fun='prelu', init=scg.he_normal)
+        self.mu = scg.Affine(200, hidden_dim, init=scg.he_normal)
+        self.sigma = scg.Affine(200, hidden_dim, init=scg.he_normal)
 
     def recognize(self, obs, state, hidden_name):
-        h = self.h1(input=scg.Concat()(a=obs, b=state))
-        #h = self.h2(input=scg.Concat()(a=h, b=state))
+        h = self.h1(input=scg.concat(obs, state))
+        h = self.h2(input=h)
         mu = self.mu(input=h)
         sigma = self.sigma(input=h)
         z = scg.Normal(self.hidden_dim)(mu=mu, pre_sigma=sigma, name=hidden_name)
@@ -72,7 +79,7 @@ class VAE:
         return 'theta_' + str(step)
 
     def __init__(self, input_data, hidden_dim, gen, rec, par=None):
-        state_dim = 256
+        state_dim = 512
 
         with tf.variable_scope('both') as vs:
             self.init_state = scg.Constant(tf.Variable(tf.zeros((2 * state_dim,))))()
@@ -104,6 +111,7 @@ class VAE:
 
         self.params_rec = []
 
+        # allocating observations
         self.obs = [None] * (episode_length+1)
         for t in xrange(episode_length+1):
             self.obs[t] = [None] * episode_length
@@ -132,7 +140,7 @@ class VAE:
                                                           VAE.hidden_name(timestep, j)))
 
             if self.par is not None and timestep < episode_length:
-                state = self.par.update(state, self.obs[timestep][timestep])
+                state = self.par.update(state, self.obs[timestep+1][timestep])
 
     def sample(self, cache=None):
         for i in xrange(episode_length):
@@ -145,6 +153,7 @@ class VAE:
         gen_ll = {}
         rec_ll = {}
 
+        # weights[t][i] -- likelihood ratio for the i-th object after t objects has been seen
         weights = [None] * (episode_length+1)
         param_weights = [None] * (episode_length+1)
 
@@ -172,24 +181,34 @@ class VAE:
 
         return param_weights, weights
 
-    def lower_bound(self, param_weights, weights):
-        vlb_gen = 0.
-        vlb_rec = 0.
+    def lower_bound(self, param_weights, weights, randomize=True):
+        vlb_gen = [0.] * episode_length
+        vlb_rec = [0.] * episode_length
 
         for i in xrange(episode_length):
-            vlb_gen += tf.reduce_mean(param_weights[i+1, :])
-            vlb_rec += tf.reduce_mean(param_weights[i, :])
+            vlb_gen[i] += tf.reduce_mean(param_weights[i+1, :])
+            vlb_rec[i] += tf.reduce_mean(param_weights[i, :])
 
-            vlb_gen += tf.reduce_sum(tf.reduce_mean(weights[i+1, :i+1, :], [1]))
-            vlb_rec += tf.reduce_sum(tf.reduce_mean(weights[i, :i+1, :], [1]))
+            vlb_gen[i] += tf.reduce_sum(tf.reduce_mean(weights[i+1, :i+1, :], [1]))
+            vlb_rec[i] += tf.reduce_sum(tf.reduce_mean(weights[i, :i+1, :], [1]))
+
+        if randomize:
+            vlb_gen, vlb_rec = tf.pack(vlb_gen), tf.pack(vlb_rec)
+
+            logits = tf.expand_dims(tf.log([1. / episode_length] * episode_length), 0)
+            random_idx = tf.cast(tf.multinomial(logits, 1)[0, 0], tf.int32)
+            vlb_gen = tf.squeeze(tf.slice(vlb_gen, [random_idx], [1]))
+            vlb_rec = tf.squeeze(tf.slice(vlb_rec, [random_idx], [1]))
+        else:
+            vlb_gen, vlb_rec = sum(vlb_gen), sum(vlb_rec)
 
         return vlb_gen, vlb_rec
 
-    def predictive_lb(self, weights):
-        ll = [None] * episode_length
+    def predictive_lb(self, param_weights, weights):
+        ll = [0. for i in xrange(episode_length)]
 
         for i in xrange(len(ll)):
-            ll[i] = tf.reduce_mean(weights[i, i, :])
+            ll[i] += tf.reduce_mean(weights[i, i, :])
 
         return tf.pack(ll)
 
@@ -221,17 +240,17 @@ batch_size = 20
 input_data = data_queue.dequeue_many(batch_size)
 binarized = tf.cast(tf.less_equal(tf.random_uniform(tf.shape(input_data)), input_data), tf.float32)
 
-vae = VAE(binarized, 20, GenerativeModel, RecognitionModel, ParamRecognition)
+vae = VAE(binarized, args.hidden_dim, GenerativeModel, RecognitionModel, ParamRecognition)
 train_samples = vae.sample(None)
 weights = vae.importance_weights(train_samples)
 
 test_samples = vae.sample(None)
 test_weights = vae.importance_weights(test_samples)
 
-train_pred_ll = vae.predictive_lb(weights[1])
+train_pred_ll = vae.predictive_lb(*weights)
 test_pred_ll = vae.predictive_likelihood(test_weights[1])
 
-vlb_gen, vlb_rec = vae.lower_bound(*weights)
+vlb_gen, vlb_rec = vae.lower_bound(*weights, randomize=False)
 
 ema = tf.train.ExponentialMovingAverage(0.99)
 avg_op = ema.apply([vlb_gen, train_pred_ll])
@@ -239,7 +258,11 @@ avg_op = ema.apply([vlb_gen, train_pred_ll])
 global_step = tf.Variable(0, trainable=False)
 learning_rate = tf.placeholder(tf.float32)
 
+epoch_passed = tf.Variable(0)
+increment_passed = epoch_passed.assign_add(1)
+
 vars_losses = zip([vae.gen_vars, vae.rec_vars], [-vlb_gen, -vlb_rec])
+#vars_losses = zip([vae.gen_vars + vae.rec_vars], [-vlb_gen])
 
 
 def grads_and_vars(vars_and_losses):
@@ -263,6 +286,12 @@ with tf.control_dependencies([opt_opt]):
 avg_vlb = ema.average(vlb_gen)
 avg_pred_lb = ema.average(train_pred_ll)
 
+reconstructions = [None] * episode_length
+for i in xrange(episode_length):
+    reconstructions[i] = tf.sigmoid(train_samples[VAE.observed_name(i, i) + '_logit'][0, :])
+reconstructions = tf.pack(reconstructions)
+original_input = input_data[0, :, :]
+
 
 def put_new_data(data, batch):
     import numpy as np
@@ -282,6 +311,7 @@ def load_data(path):
         data.append(raw_data[cl][None, :, :])
     return np.concatenate(data, axis=0)
 
+saver = tf.train.Saver()
 with tf.Session() as sess:
     def data_loop(coordinator=None):
         train_data = load_data('data/train_small_aug10.npz')
@@ -293,11 +323,10 @@ with tf.Session() as sess:
             sess.run(enqueue_op, feed_dict={new_data: batch})
 
     coord = tf.train.Coordinator()
-    sess.run(tf.initialize_all_variables())
-
-    # for i in xrange(20):
-    #     p = Process(data_loop)
-    #     p.start()
+    if os.path.exists(args.checkpoint):
+        saver.restore(sess, args.checkpoint)
+    else:
+        sess.run(tf.initialize_all_variables())
 
     data_threads = [Thread(target=data_loop, args=[coord]) for i in xrange(1)]
 
@@ -306,7 +335,6 @@ with tf.Session() as sess:
 
 
     def test():
-        print
         test_data = load_data('data/test_small_aug4.npz')
         avg_pred_ll = np.zeros(episode_length)
         batch = np.zeros((batch_size, episode_length, data_dim), dtype=np.float32)
@@ -319,10 +347,19 @@ with tf.Session() as sess:
                 sys.stdout.write(' %.2f' % avg_pred_ll[t])
         print
 
+    num_epochs = 0
+    done_epochs = epoch_passed.eval(sess)
     log_file = open('log.txt', 'w')
-    for epochs, lr in zip([500, 500, 500], [1e-3, 3e-4, 1e-4]):
+    for epochs, lr in zip([100, 100, 100], [1e-3, 3e-4, 1e-4]):
         for epoch in xrange(epochs):
+            if num_epochs < done_epochs:
+                num_epochs += 1
+                continue
+
+            epoch_started = time.time()
             for batch in xrange(24345 / batch_size / episode_length):
+
+                # lb, i, _ = sess.run([avg_vlb, global_step, train_op], feed_dict={learning_rate: lr})
                 lb, pred_lb, i, _ = sess.run([avg_vlb, avg_pred_lb, global_step, train_op],
                                     feed_dict={learning_rate: lr})
 
@@ -332,14 +369,22 @@ with tf.Session() as sess:
                 log_file.write('\repoch {0}, batch {1}, lower bound: {2}'.format(epoch, i, lb))
                 log_file.flush()
 
-                if np.random.rand() < 0.003:
-                    sample = sess.run(train_samples['x_2_0_logit'])
-                    plt.matshow(sample.reshape(28 * 20, 28))
+                if np.random.rand() < 0.01:
+                    sample, original = sess.run([reconstructions, original_input])
+                    plt.matshow(np.hstack([sample.reshape(28 * episode_length, 28),
+                                           original.reshape(28 * episode_length, 28)]))
                     plt.savefig('samples.png')
+                    plt.close()
 
-                if epoch % 20 == 0 and batch == 0:
-                    test()
-            print '' \
+            print
+            print 'time for epoch: %f' % (time.time() - epoch_started)
+
+            sess.run(increment_passed)
+            if epoch % 10 == 0:
+                saver.save(sess, args.checkpoint)
+
+            if epoch % 20 == 0 and epoch > 0:
+                test()
 
     log_file.close()
     coord.request_stop()
