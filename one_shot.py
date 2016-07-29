@@ -19,18 +19,27 @@ episode_length = args.episode
 
 
 class GenerativeModel:
-    def __init__(self, hidden_dim):
+    def __init__(self, hidden_dim, state_dim, param_dim):
         self.hidden_dim = hidden_dim
+        self.param_dim = param_dim
 
+        self.hp = scg.Affine(state_dim, 200, 'prelu', scg.he_normal)
+        self.mu = scg.Affine(200, self.hidden_dim, None, scg.he_normal)
+        self.pre_sigma = scg.Affine(200, self.hidden_dim, None, scg.he_normal)
         self.prior = scg.Normal(self.hidden_dim)
 
-        self.h1 = scg.Affine(hidden_dim, 200, fun='prelu', init=scg.he_normal)
+        self.h1 = scg.Affine(hidden_dim + param_dim, 200, fun='prelu', init=scg.he_normal)
         self.h2 = scg.Affine(200, 200, fun='prelu', init=scg.he_normal)
         self.logit = scg.Affine(200, data_dim, init=scg.he_normal)
 
-    def generate(self, observed_name, hidden_name):
-        z = self.prior(name=hidden_name)
-        h = self.h1(input=z)
+    def generate_prior(self, state, hidden_name):
+        hp = self.hp(input=state)
+        z = self.prior(name=hidden_name, mu=self.mu(input=hp),
+                       pre_sigma=self.pre_sigma(input=hp))
+        return z
+
+    def generate(self, z, param, observed_name):
+        h = self.h1(input=scg.concat([z, param]))
         h = self.h2(input=h)
         logit = self.logit(input=h, name=observed_name + '_logit')
         return scg.Bernoulli()(logit=logit, name=observed_name)
@@ -41,14 +50,15 @@ class RecognitionModel:
         self.hidden_dim = hidden_dim
         self.param_dim = param_dim
 
-        self.h1 = scg.Affine(data_dim + param_dim, 200, fun='prelu', init=scg.he_normal)
-        self.h2 = scg.Affine(200, 200, fun='prelu', init=scg.he_normal)
+        self.h1 = scg.Affine(param_dim + data_dim, 200, fun='prelu', init=scg.he_normal)
+        # self.h2 = scg.Affine(200, 200, fun='prelu', init=scg.he_normal)
         self.mu = scg.Affine(200, hidden_dim, init=scg.he_normal)
         self.sigma = scg.Affine(200, hidden_dim, init=scg.he_normal)
 
     def recognize(self, obs, param, hidden_name):
+        # h = self.h1(input=param)
         h = self.h1(input=scg.concat([obs, param]))
-        h = self.h2(input=h)
+        # h = self.h2(input=h)
         mu = self.mu(input=h)
         sigma = self.sigma(input=h)
         z = scg.Normal(self.hidden_dim)(mu=mu, pre_sigma=sigma, name=hidden_name)
@@ -56,61 +66,70 @@ class RecognitionModel:
 
 
 class ParamRecognition:
-    def __init__(self, state_dim, feature_dim=100, param_dim=100):
+    def __init__(self, state_dim, hidden_dim, feature_dim=100, param_dim=100, mem_dim=100):
         self.feature_dim = feature_dim
         self.param_dim = param_dim
 
         self.cell = scg.GRU(data_dim, state_dim, fun='prelu', init=scg.he_normal)
-        # self.img_features = scg.Affine(data_dim, feature_dim, fun='prelu', init=scg.he_normal)
-        # self.source_encoder = scg.Affine(feature_dim + state_dim, param_dim,
-        #                                  fun='prelu', init=scg.he_normal)
-        # self.query_encoder = scg.Affine(feature_dim + state_dim, param_dim,
-        #                                 fun='prelu', init=scg.he_normal)
-
-        self.source_encoder = scg.Affine(data_dim + state_dim, param_dim,
+        self.img_features = scg.Affine(data_dim, feature_dim, fun='prelu', init=scg.he_normal)
+        self.source_encoder = scg.Affine(feature_dim + state_dim, mem_dim,
                                          fun='prelu', init=scg.he_normal)
-        self.query_encoder = scg.Affine(data_dim + state_dim, param_dim,
+        self.query_encoder = scg.Affine(hidden_dim + state_dim, mem_dim,
+                                         fun='prelu', init=scg.he_normal)
+        self.param_encoder = scg.Affine(data_dim + state_dim, param_dim,
                                         fun='prelu', init=scg.he_normal)
+        self.dummy_mem = scg.Constant(tf.Variable(tf.random_uniform([1, mem_dim],
+                                                                    -1. / mem_dim,
+                                                                    1. / mem_dim)))
+        self.dummy_param = scg.Constant(tf.Variable(tf.zeros([1, param_dim])))
+
+        # self.source_encoder = scg.Affine(data_dim + state_dim, param_dim,
+        #                                  fun='prelu', init=scg.he_normal)
+        # self.query_encoder = scg.Affine(data_dim + state_dim, param_dim,
+        #                                 fun='prelu', init=scg.he_normal)
 
     def update(self, state, obs):
         state = self.cell(input=obs, state=state)
         return state
 
     def encode_source(self, state, obs):
-        # features = self.img_features(input=obs)
-        features = obs
-        return features, self.source_encoder(input=scg.concat([features, state]))
+        features = self.img_features(input=obs)
+        # features = obs
+        return self.param_encoder(input=scg.concat([obs, state])), \
+            self.source_encoder(input=scg.concat([features, state]))
 
-    def encode_query(self, state, obs):
-        # features = self.img_features(input=obs)
-        features = obs
-        return self.query_encoder(input=scg.concat([features, state]))
+    def encode_query(self, state, z):
+        return self.query_encoder(input=scg.concat([z, state]))
 
     def build_memory(self, state, observations, time_step):
-        if time_step == 0:
-            return None
+        mem = [scg.batch_repeat(self.dummy_mem(), state)]
+        params = [scg.batch_repeat(self.dummy_param(), state)]
 
-        sources = [None] * time_step
-        features = [None] * time_step
         for i in xrange(time_step):
-            features[i], sources[i] = self.encode_source(state, observations[i])
+            param, cell = self.encode_source(state, observations[i])
 
             def transform(input=None):
                 return tf.expand_dims(input, 1)
 
-            features[i] = scg.apply(transform, input=features[i])
-            sources[i] = scg.apply(transform, input=sources[i])
-        features, sources = scg.concat(features, 1), scg.concat(sources, 1)
-        return sources
+            param = scg.apply(transform, input=param)
+            cell = scg.apply(transform, input=cell)
 
-    def query(self, sources, state, obs):
-        if sources is None:
+            params.append(param)
+            mem.append(cell)
+
+        params, mem = scg.concat(params, 1), scg.concat(mem, 1)
+        return params, mem
+
+    def query(self, resources, state, query):
+        if resources is None:
             return scg.BatchRepeat()(input=scg.Constant(tf.zeros([self.param_dim]))(),
                                      batch=scg.StealBatch()(input=state))
 
-        query = self.encode_query(state, obs)
-        attention = scg.Attention()(mem=sources, key=query)
-        return scg.AttentiveReader()(attention=attention, mem=sources)
+        features, sources = resources
+
+        attention = scg.Attention(strength=1.)(mem=sources, key=query)
+
+        return scg.AttentiveReader()(attention=attention, mem=features)
 
 
 class VAE:
@@ -127,16 +146,16 @@ class VAE:
         return 'theta_' + str(step)
 
     def __init__(self, input_data, hidden_dim, gen, rec, par=None):
-        state_dim = 100
+        state_dim = 200
         param_dim = 100
         feature_dim = 100
 
         with tf.variable_scope('both') as vs:
-            self.init_state = scg.Constant(tf.Variable(tf.zeros((state_dim,))))()
+            self.init_state = scg.Constant(tf.Variable(tf.zeros((state_dim,)), trainable=True))()
             self.both_vars = [var for var in tf.all_variables() if var.name.startswith(vs.name)]
 
         with tf.variable_scope('generation') as vs:
-            self.gen = gen(hidden_dim)
+            self.gen = gen(hidden_dim, state_dim, param_dim)
 
             self.gen_vars = self.both_vars + [var for var in tf.all_variables() if var.name.startswith(vs.name)]
 
@@ -145,7 +164,7 @@ class VAE:
             self.par = par
 
             if par is not None:
-                self.par = par(state_dim, feature_dim, param_dim)
+                self.par = par(state_dim, hidden_dim, feature_dim, param_dim)
 
             self.rec_vars = self.both_vars + [var for var in tf.all_variables() if var.name.startswith(vs.name)]
 
@@ -166,23 +185,28 @@ class VAE:
             self.z.append([])
             self.x.append([])
 
-            sources = self.par.build_memory(state, self.obs[timestep], timestep)
+            resources = self.par.build_memory(state, self.obs[timestep], timestep)
 
             for j in xrange(min(timestep+1, episode_length)):
-                param = self.par.query(sources, state, self.obs[timestep][j])
+                param = self.par.query(resources, state,
+                                       self.par.encode_source(state, self.obs[timestep][j])[1])
 
                 self.z[timestep].append(self.rec.recognize(self.obs[timestep][j],
-                                                           state,
+                                                           param,
                                                            VAE.hidden_name(timestep, j)))
-                self.x[timestep].append(self.gen.generate(VAE.observed_name(timestep, j),
-                                                          VAE.hidden_name(timestep, j)))
+
+                z_prior = self.gen.generate_prior(state, VAE.hidden_name(timestep, j))
+                param = self.par.query(resources, state,
+                                       self.par.encode_query(state, z_prior))
+                self.x[timestep].append(self.gen.generate(z_prior, param,
+                                                          VAE.observed_name(timestep, j)))
 
             if self.par is not None and timestep < episode_length:
-                state = self.par.update(state, self.obs[timestep+1][timestep])
+                state = self.par.update(state, self.obs[timestep][timestep])
 
     def sample(self, cache=None):
-        for i in xrange(episode_length):
-            for j in xrange(i+1):
+        for i in xrange(episode_length+1):
+            for j in xrange(min(episode_length, i+1)):
                 cache = self.z[i][j].backtrace(cache)
                 cache = self.x[i][j].backtrace(cache)
         return cache
@@ -212,25 +236,13 @@ class VAE:
 
         return weights
 
-    def lower_bound(self, weights, randomize=True):
-        vlb_gen = [0.] * episode_length
-        vlb_rec = [0.] * episode_length
+    def lower_bound(self, weights):
+        vlb_gen = 0.
 
         for i in xrange(episode_length):
-            vlb_gen[i] += tf.reduce_sum(tf.reduce_mean(weights[i+1, :i+1, :], [1]))
-            vlb_rec[i] += tf.reduce_sum(tf.reduce_mean(weights[i, :i+1, :], [1]))
+            vlb_gen += tf.reduce_mean(weights[i, i, :])
 
-        if randomize:
-            vlb_gen, vlb_rec = tf.pack(vlb_gen), tf.pack(vlb_rec)
-
-            logits = tf.expand_dims(tf.log([1. / episode_length] * episode_length), 0)
-            random_idx = tf.cast(tf.multinomial(logits, 1)[0, 0], tf.int32)
-            vlb_gen = tf.squeeze(tf.slice(vlb_gen, [random_idx], [1]))
-            vlb_rec = tf.squeeze(tf.slice(vlb_rec, [random_idx], [1]))
-        else:
-            vlb_gen, vlb_rec = sum(vlb_gen), sum(vlb_rec)
-
-        return vlb_gen, vlb_rec
+        return vlb_gen
 
     def predictive_lb(self, weights):
         ll = [0. for i in xrange(episode_length)]
@@ -266,7 +278,7 @@ test_weights = vae.importance_weights(test_samples)
 
 train_pred_ll = vae.predictive_lb(weights)
 
-vlb_gen, vlb_rec = vae.lower_bound(weights, randomize=False)
+vlb_gen = vae.lower_bound(weights)
 
 ema = tf.train.ExponentialMovingAverage(0.99)
 avg_op = ema.apply([vlb_gen, train_pred_ll])
@@ -276,9 +288,6 @@ learning_rate = tf.placeholder(tf.float32)
 
 epoch_passed = tf.Variable(0)
 increment_passed = epoch_passed.assign_add(1)
-
-#vars_losses = zip([vae.gen_vars, vae.rec_vars], [-vlb_gen, -vlb_rec])
-vars_losses = zip([vae.gen_vars + vae.rec_vars], [-vlb_gen])
 
 
 def grads_and_vars(vars_and_losses):
@@ -291,8 +300,8 @@ def grads_and_vars(vars_and_losses):
                 grads[var] += grad
     return [(grad, var) for var, grad in grads.iteritems()]
 
-opt_opt = CustomAdam(beta2=0.99, epsilon=1e-4, learning_rate=learning_rate,
-                     use_locking=False).minimize(grads_and_vars(vars_losses), global_step)
+opt_opt = tf.train.AdamOptimizer(beta2=0.99, epsilon=1e-4, learning_rate=learning_rate,
+                                 use_locking=False).minimize(-vlb_gen, global_step)
 
 gen_cache = vae.x[0][0].backtrace(batch=5)
 
@@ -313,7 +322,7 @@ def put_new_data(data, batch):
     import numpy as np
 
     for j in xrange(batch.shape[0]):
-        random_classes = np.random.choice(data.shape[0], 1)
+        random_classes = np.random.choice(data.shape[0], 2)
         classes = np.random.choice(random_classes, batch.shape[1])
         batch[j] = data[classes, np.random.choice(data.shape[1], batch.shape[1])]
 

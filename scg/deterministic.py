@@ -241,3 +241,7 @@ class DictExtractor(NodePrototype):
 
 def by_key(input, key):
     return DictExtractor(key)(input=input)
+
+
+def batch_repeat(input, donor):
+    return BatchRepeat()(input=input, batch=StealBatch()(input=donor))
