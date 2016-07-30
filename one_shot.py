@@ -28,9 +28,9 @@ class GenerativeModel:
         self.pre_sigma = scg.Affine(200, self.hidden_dim, None, scg.he_normal)
         self.prior = scg.Normal(self.hidden_dim)
 
-        self.h1 = scg.Affine(hidden_dim + param_dim, 200, fun='prelu', init=scg.he_normal)
-        self.h2 = scg.Affine(200, 200, fun='prelu', init=scg.he_normal)
-        self.logit = scg.Affine(200, data_dim, init=scg.he_normal)
+        self.h1 = scg.Affine(hidden_dim, 200, fun='prelu', init=scg.he_normal)
+        # self.h2 = scg.Affine(200, 200, fun='prelu', init=scg.he_normal)
+        self.logit = scg.Affine(200 + param_dim, data_dim, init=scg.he_normal)
 
     def generate_prior(self, state, hidden_name):
         hp = self.hp(input=state)
@@ -39,9 +39,9 @@ class GenerativeModel:
         return z
 
     def generate(self, z, param, observed_name):
-        h = self.h1(input=scg.concat([z, param]))
-        h = self.h2(input=h)
-        logit = self.logit(input=h, name=observed_name + '_logit')
+        h = self.h1(input=z)
+        # h = self.h2(input=h)
+        logit = self.logit(input=scg.concat([h, param]), name=observed_name + '_logit')
         return scg.Bernoulli()(logit=logit, name=observed_name)
 
 
@@ -82,6 +82,7 @@ class ParamRecognition:
                                                                     -1. / mem_dim,
                                                                     1. / mem_dim)))
         self.dummy_param = scg.Constant(tf.Variable(tf.zeros([1, param_dim])))
+        self.strength = scg.Affine(state_dim, 1, init=scg.he_normal)
 
         # self.source_encoder = scg.Affine(data_dim + state_dim, param_dim,
         #                                  fun='prelu', init=scg.he_normal)
@@ -127,7 +128,8 @@ class ParamRecognition:
 
         features, sources = resources
 
-        attention = scg.Attention(strength=1.)(mem=sources, key=query)
+        attention = scg.Attention()(mem=sources, key=query,
+                                    strength=self.strength(input=state))
 
         return scg.AttentiveReader()(attention=attention, mem=features)
 
@@ -147,7 +149,7 @@ class VAE:
 
     def __init__(self, input_data, hidden_dim, gen, rec, par=None):
         state_dim = 200
-        param_dim = 100
+        param_dim = 200
         feature_dim = 100
 
         with tf.variable_scope('both') as vs:

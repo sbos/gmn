@@ -75,9 +75,9 @@ class Attention(NodePrototype):
         if strength is None:
             strength = self.strength
 
-        key_norm = tf.sqrt(tf.reduce_sum(tf.square(key), [1]))
+        key_norm = tf.clip_by_value(tf.sqrt(tf.reduce_sum(tf.square(key), [1])), 1e-12, 1e12)
         # shape = batch x num_cells
-        mem_norm = tf.sqrt(tf.reduce_sum(tf.square(mem), [2]))
+        mem_norm = tf.clip_by_value(tf.sqrt(tf.reduce_sum(tf.square(mem), [2])), 1e-12, 1e12)
         # shape = batch x num_cells
         sim = tf.batch_matmul(tf.expand_dims(key, 1), mem, adj_y=True)
         sim = tf.squeeze(sim, [1])
