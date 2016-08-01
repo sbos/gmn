@@ -11,7 +11,10 @@ import os
 parser = argparse.ArgumentParser()
 parser.add_argument('--episode', type=int, default=10)
 parser.add_argument('--checkpoint', type=str, default=None)
-parser.add_argument('--hidden_dim', type=int, default=50)
+parser.add_argument('--hidden-dim', type=int, default=50)
+parser.add_argument('--test', type=int, default=None)
+parser.add_argument('--max-classes', type=int, default=2)
+parser.add_argument('--test-episodes', type=int, default=1000)
 args = parser.parse_args()
 
 data_dim = 28*28
@@ -134,6 +137,35 @@ class ParamRecognition:
         return scg.AttentiveReader()(attention=attention, mem=features)
 
 
+def lower_bound(weights):
+    vlb_gen = 0.
+
+    for i in xrange(episode_length):
+        vlb_gen += tf.reduce_mean(weights[i, i, :])
+
+    return vlb_gen
+
+
+def predictive_lb(weights):
+    ll = [0. for i in xrange(episode_length)]
+
+    for i in xrange(len(ll)):
+        ll[i] += tf.reduce_mean(weights[i, i, :])
+
+    return tf.pack(ll)
+
+
+def predictive_ll(weights):
+    ll = [0. for i in xrange(episode_length)]
+
+    for i in xrange(len(ll)):
+        max_w = tf.reduce_max(weights[i, i, :])
+        w = weights[i, i, :] - max_w
+        ll[i] += tf.log(tf.reduce_mean(tf.exp(w))) + max_w
+
+    return tf.pack(ll)
+
+
 class VAE:
     @staticmethod
     def hidden_name(step, j):
@@ -238,22 +270,6 @@ class VAE:
 
         return weights
 
-    def lower_bound(self, weights):
-        vlb_gen = 0.
-
-        for i in xrange(episode_length):
-            vlb_gen += tf.reduce_mean(weights[i, i, :])
-
-        return vlb_gen
-
-    def predictive_lb(self, weights):
-        ll = [0. for i in xrange(episode_length)]
-
-        for i in xrange(len(ll)):
-            ll[i] += tf.reduce_mean(weights[i, i, :])
-
-        return tf.pack(ll)
-
 
 class CustomAdam(tf.train.AdamOptimizer):
     def __init__(self, learning_rate=0.001, beta1=0.9, beta2=0.999, epsilon=1e-4,
@@ -267,7 +283,7 @@ data_queue = tf.FIFOQueue(1000, tf.float32, shapes=[episode_length, data_dim])
 
 new_data = tf.placeholder(tf.float32, [None, episode_length, data_dim])
 enqueue_op = data_queue.enqueue_many(new_data)
-batch_size = 20
+batch_size = 20 if args.test is None else args.test
 input_data = data_queue.dequeue_many(batch_size)
 binarized = tf.cast(tf.less_equal(tf.random_uniform(tf.shape(input_data)), input_data), tf.float32)
 
@@ -278,12 +294,13 @@ weights = vae.importance_weights(train_samples)
 test_samples = vae.sample(None)
 test_weights = vae.importance_weights(test_samples)
 
-train_pred_ll = vae.predictive_lb(weights)
+train_pred_lb = predictive_lb(weights)
+train_pred_ll = predictive_ll(weights)
 
-vlb_gen = vae.lower_bound(weights)
+vlb_gen = lower_bound(weights)
 
 ema = tf.train.ExponentialMovingAverage(0.99)
-avg_op = ema.apply([vlb_gen, train_pred_ll])
+avg_op = ema.apply([vlb_gen, train_pred_lb])
 
 global_step = tf.Variable(0, trainable=False)
 learning_rate = tf.placeholder(tf.float32)
@@ -311,7 +328,7 @@ with tf.control_dependencies([opt_opt]):
     train_op = tf.group(avg_op)
 
 avg_vlb = ema.average(vlb_gen)
-avg_pred_lb = ema.average(train_pred_ll)
+avg_pred_lb = ema.average(train_pred_lb)
 
 reconstructions = [None] * episode_length
 for i in xrange(episode_length):
@@ -323,10 +340,15 @@ original_input = input_data[0, :, :]
 def put_new_data(data, batch):
     import numpy as np
 
-    for j in xrange(batch.shape[0]):
-        random_classes = np.random.choice(data.shape[0], 2)
+    num_entries = batch.shape[0] if args.test is None else 1
+    for j in xrange(num_entries):
+        random_classes = np.random.choice(data.shape[0], args.max_classes)
         classes = np.random.choice(random_classes, batch.shape[1])
         batch[j] = data[classes, np.random.choice(data.shape[1], batch.shape[1])]
+
+    if args.test is not None:
+        for j in xrange(1, batch.shape[0]):
+            batch[j] = batch[0]
 
     np.true_divide(batch, 255., out=batch, casting='unsafe')
 
@@ -351,8 +373,10 @@ with tf.Session() as sess:
 
     coord = tf.train.Coordinator()
     if args.checkpoint is not None and os.path.exists(args.checkpoint):
+        print 'checkpoint found, restoring'
         saver.restore(sess, args.checkpoint)
     else:
+        print 'starting from scratch'
         sess.run(tf.initialize_all_variables())
 
     data_threads = [Thread(target=data_loop, args=[coord]) for i in xrange(1)]
@@ -365,10 +389,14 @@ with tf.Session() as sess:
         test_data = load_data('data/test_small_aug4.npz')
         avg_pred_ll = np.zeros(episode_length)
         batch = np.zeros((batch_size, episode_length, data_dim), dtype=np.float32)
-        for j in xrange(1000):
+
+        target = train_pred_lb if args.test is None else train_pred_ll
+
+        for j in xrange(args.test_episodes):
             put_new_data(test_data, batch)
-            pred_ll = sess.run(train_pred_ll, feed_dict={input_data: batch})
+            pred_ll = sess.run(target, feed_dict={input_data: batch})
             avg_pred_ll += (pred_ll - avg_pred_ll) / (j+1)
+
             sys.stdout.write('\rtesting %d' % j)
             for t in xrange(episode_length):
                 sys.stdout.write(' %.2f' % avg_pred_ll[t])
@@ -376,8 +404,13 @@ with tf.Session() as sess:
 
     num_epochs = 0
     done_epochs = epoch_passed.eval(sess)
-    log_file = open('log.txt', 'w')
-    for epochs, lr in zip([150, 150, 150], [1e-3, 3e-4, 1e-4]):
+
+    if args.test is not None:
+        test()
+        sys.exit()
+
+    log_file = None if args.checkpoint is None else open(args.checkpoint + '.log', 'a')
+    for epochs, lr in zip([250, 250, 250], [1e-3, 3e-4, 1e-4]):
         for epoch in xrange(epochs):
             if num_epochs < done_epochs:
                 num_epochs += 1
@@ -408,11 +441,12 @@ with tf.Session() as sess:
             print 'time for epoch: %f' % (time.time() - epoch_started)
 
             sess.run(increment_passed)
-            if epoch % 10 == 0 and args.checkpoint is not None:
+            if epoch % 30 == 0 and args.checkpoint is not None:
                 saver.save(sess, args.checkpoint)
 
             if epoch % 20 == 0 and epoch > 0:
                 test()
 
-    log_file.close()
+    if log_file is not None:
+        log_file.close()
     coord.request_stop()
