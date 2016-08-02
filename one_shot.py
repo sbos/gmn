@@ -1,12 +1,15 @@
-import tensorflow as tf
-import numpy as np
-import scg
-import sys
-from threading import Thread
-import matplotlib.pyplot as plt
-import time
 import argparse
+import logging
 import os
+import sys
+import time
+from threading import Thread
+
+import matplotlib.pyplot as plt
+import numpy as np
+import tensorflow as tf
+
+import scg
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--episode', type=int, default=10)
@@ -83,8 +86,8 @@ class ParamRecognition:
                                         fun='prelu', init=scg.he_normal)
         self.dummy_mem = scg.Constant(tf.Variable(tf.random_uniform([1, mem_dim],
                                                                     -1. / mem_dim,
-                                                                    1. / mem_dim)))
-        self.dummy_param = scg.Constant(tf.Variable(tf.zeros([1, param_dim])))
+                                                                    1. / mem_dim)))()
+        self.dummy_param = scg.Constant(tf.Variable(tf.zeros([1, param_dim])))()
         self.strength = scg.Affine(state_dim, 1, init=scg.he_normal)
 
         # self.source_encoder = scg.Affine(data_dim + state_dim, param_dim,
@@ -106,8 +109,8 @@ class ParamRecognition:
         return self.query_encoder(input=scg.concat([z, state]))
 
     def build_memory(self, state, observations, time_step):
-        mem = [scg.batch_repeat(self.dummy_mem(), state)]
-        params = [scg.batch_repeat(self.dummy_param(), state)]
+        mem = [scg.batch_repeat(self.dummy_mem, state)]
+        params = [scg.batch_repeat(self.dummy_param, state)]
 
         for i in xrange(time_step):
             param, cell = self.encode_source(state, observations[i])
@@ -125,10 +128,6 @@ class ParamRecognition:
         return params, mem
 
     def query(self, resources, state, query):
-        if resources is None:
-            return scg.BatchRepeat()(input=scg.Constant(tf.zeros([self.param_dim]))(),
-                                     batch=scg.StealBatch()(input=state))
-
         features, sources = resources
 
         attention = scg.Attention()(mem=sources, key=query,
@@ -271,14 +270,6 @@ class VAE:
         return weights
 
 
-class CustomAdam(tf.train.AdamOptimizer):
-    def __init__(self, learning_rate=0.001, beta1=0.9, beta2=0.999, epsilon=1e-4,
-                 use_locking=True, name="CustomAdam"):
-        super(CustomAdam, self).__init__(learning_rate, beta1, beta2, epsilon, use_locking, name)
-
-    def minimize(self, grads_and_vars, global_step=None, name=None):
-        return self.apply_gradients(grads_and_vars, global_step, name)
-
 data_queue = tf.FIFOQueue(1000, tf.float32, shapes=[episode_length, data_dim])
 
 new_data = tf.placeholder(tf.float32, [None, episode_length, data_dim])
@@ -397,10 +388,11 @@ with tf.Session() as sess:
             pred_ll = sess.run(target, feed_dict={input_data: batch})
             avg_pred_ll += (pred_ll - avg_pred_ll) / (j+1)
 
-            sys.stdout.write('\rtesting %d' % j)
-            for t in xrange(episode_length):
-                sys.stdout.write(' %.2f' % avg_pred_ll[t])
-        print
+            if j % 100 == 0:
+                msg = 'testing %d' % j
+                for t in xrange(episode_length):
+                    msg += ' %.2f' % avg_pred_ll[t]
+                log.info(msg)
 
     num_epochs = 0
     done_epochs = epoch_passed.eval(sess)
@@ -409,7 +401,12 @@ with tf.Session() as sess:
         test()
         sys.exit()
 
-    log_file = None if args.checkpoint is None else open(args.checkpoint + '.log', 'a')
+    log = logging.getLogger()
+    log.setLevel(10)
+    log.addHandler(logging.StreamHandler())
+    if args.checkpoint is not None:
+        log.addHandler(logging.FileHandler(args.checkpoint + '.log'))
+
     for epochs, lr in zip([250, 250, 250], [1e-3, 3e-4, 1e-4]):
         for epoch in xrange(epochs):
             if num_epochs < done_epochs:
@@ -423,11 +420,11 @@ with tf.Session() as sess:
                 lb, pred_lb, i, _ = sess.run([avg_vlb, avg_pred_lb, global_step, train_op],
                                     feed_dict={learning_rate: lr})
 
-                sys.stdout.write('\repoch {0}, batch {1} '.format(epoch, i))
-                for t in xrange(episode_length):
-                    sys.stdout.write(' %.2f' % pred_lb[t])
-                log_file.write('\repoch {0}, batch {1}, lower bound: {2}'.format(epoch, i, lb))
-                log_file.flush()
+                if np.random.rand() < 0.02:
+                    msg = '\repoch {0}, batch {1} '.format(epoch, i)
+                    for t in xrange(episode_length):
+                        msg += ' %.2f' % pred_lb[t]
+                    log.info(msg)
 
                 if np.random.rand() < 0.01:
                     sample, original = sess.run([reconstructions, original_input])
@@ -437,8 +434,7 @@ with tf.Session() as sess:
                     plt.savefig('samples.png')
                     plt.close()
 
-            print
-            print 'time for epoch: %f' % (time.time() - epoch_started)
+            log.debug('time for epoch: %f', (time.time() - epoch_started))
 
             sess.run(increment_passed)
             if epoch % 30 == 0 and args.checkpoint is not None:
@@ -447,6 +443,4 @@ with tf.Session() as sess:
             if epoch % 20 == 0 and epoch > 0:
                 test()
 
-    if log_file is not None:
-        log_file.close()
     coord.request_stop()
