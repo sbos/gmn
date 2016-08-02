@@ -331,15 +331,10 @@ original_input = input_data[0, :, :]
 def put_new_data(data, batch):
     import numpy as np
 
-    num_entries = batch.shape[0] if args.test is None else 1
-    for j in xrange(num_entries):
+    for j in xrange(batch.shape[0]):
         random_classes = np.random.choice(data.shape[0], args.max_classes)
         classes = np.random.choice(random_classes, batch.shape[1])
         batch[j] = data[classes, np.random.choice(data.shape[1], batch.shape[1])]
-
-    if args.test is not None:
-        for j in xrange(1, batch.shape[0]):
-            batch[j] = batch[0]
 
     np.true_divide(batch, 255., out=batch, casting='unsafe')
 
@@ -353,6 +348,12 @@ def load_data(path):
 
 saver = tf.train.Saver()
 with tf.Session() as sess:
+    log = logging.getLogger()
+    log.setLevel(10)
+    log.addHandler(logging.StreamHandler())
+    if args.checkpoint is not None:
+        log.addHandler(logging.FileHandler(args.checkpoint + '.log'))
+
     def data_loop(coordinator=None):
         train_data = load_data('data/train_small_aug10.npz')
         batch = np.zeros((1, episode_length, data_dim))
@@ -376,36 +377,35 @@ with tf.Session() as sess:
         t.start()
 
 
-    def test():
+    def test(full=False):
         test_data = load_data('data/test_small_aug4.npz')
-        avg_pred_ll = np.zeros(episode_length)
-        batch = np.zeros((batch_size, episode_length, data_dim), dtype=np.float32)
+        avg_predictive_ll = np.zeros(episode_length)
+        batch_data = np.zeros((batch_size, episode_length, data_dim), dtype=np.float32)
 
-        target = train_pred_lb if args.test is None else train_pred_ll
+        target = train_pred_lb if not full else train_pred_ll
 
         for j in xrange(args.test_episodes):
-            put_new_data(test_data, batch)
-            pred_ll = sess.run(target, feed_dict={input_data: batch})
-            avg_pred_ll += (pred_ll - avg_pred_ll) / (j+1)
+            if full:
+                put_new_data(test_data, batch_data[:1, :, :])
+                for t in xrange(1, batch_data.shape[0]):
+                    batch_data[t] = batch_data[0]
+            else:
+                put_new_data(test_data, batch_data[:, :, :])
 
-            if j % 100 == 0:
-                msg = 'testing %d' % j
-                for t in xrange(episode_length):
-                    msg += ' %.2f' % avg_pred_ll[t]
-                log.info(msg)
+            pred_ll = sess.run(target, feed_dict={input_data: batch_data})
+            avg_predictive_ll += (pred_ll - avg_predictive_ll) / (j+1)
+
+            msg = 'testing %d' % j
+            for t in xrange(episode_length):
+                msg += ' %.2f' % avg_predictive_ll[t]
+            log.info(msg)
 
     num_epochs = 0
     done_epochs = epoch_passed.eval(sess)
 
     if args.test is not None:
-        test()
+        test(full=True)
         sys.exit()
-
-    log = logging.getLogger()
-    log.setLevel(10)
-    log.addHandler(logging.StreamHandler())
-    if args.checkpoint is not None:
-        log.addHandler(logging.FileHandler(args.checkpoint + '.log'))
 
     for epochs, lr in zip([250, 250, 250], [1e-3, 3e-4, 1e-4]):
         for epoch in xrange(epochs):
@@ -415,10 +415,8 @@ with tf.Session() as sess:
 
             epoch_started = time.time()
             for batch in xrange(24345 / batch_size / episode_length):
-
-                # lb, i, _ = sess.run([avg_vlb, global_step, train_op], feed_dict={learning_rate: lr})
                 lb, pred_lb, i, _ = sess.run([avg_vlb, avg_pred_lb, global_step, train_op],
-                                    feed_dict={learning_rate: lr})
+                                             feed_dict={learning_rate: lr})
 
                 if np.random.rand() < 0.02:
                     msg = '\repoch {0}, batch {1} '.format(epoch, i)
