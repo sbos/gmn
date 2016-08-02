@@ -18,6 +18,8 @@ parser.add_argument('--hidden-dim', type=int, default=50)
 parser.add_argument('--test', type=int, default=None)
 parser.add_argument('--max-classes', type=int, default=2)
 parser.add_argument('--test-episodes', type=int, default=1000)
+parser.add_argument('--reconstructions', action='store_const', const=True)
+parser.add_argument('--test-dataset', type=str, default='data/test_small_aug4.npz')
 args = parser.parse_args()
 
 data_dim = 28*28
@@ -342,8 +344,9 @@ def put_new_data(data, batch):
 def load_data(path):
     raw_data = np.load(path)
     data = []
+    min_size = min([raw_data[f].shape[0] for f in raw_data.files])
     for cl in raw_data.files:
-        data.append(raw_data[cl][None, :, :])
+        data.append(raw_data[cl][None, :min_size, :])
     return np.concatenate(data, axis=0)
 
 saver = tf.train.Saver()
@@ -355,7 +358,7 @@ with tf.Session() as sess:
         log.addHandler(logging.FileHandler(args.checkpoint + '.log'))
 
     def data_loop(coordinator=None):
-        train_data = load_data('data/train_small_aug10.npz')
+        train_data = load_data('data/train_small_aug10.npz') if not args.reconstructions else load_data(args.test_dataset)
         batch = np.zeros((1, episode_length, data_dim))
         # test_data = np.load('data/test_small.npz')
 
@@ -378,7 +381,7 @@ with tf.Session() as sess:
 
 
     def test(full=False):
-        test_data = load_data('data/test_small_aug4.npz')
+        test_data = load_data(args.test_dataset)
         avg_predictive_ll = np.zeros(episode_length)
         batch_data = np.zeros((batch_size, episode_length, data_dim), dtype=np.float32)
 
@@ -406,6 +409,15 @@ with tf.Session() as sess:
     if args.test is not None:
         test(full=True)
         sys.exit()
+    elif args.reconstructions:
+        while True:
+            sample, original = sess.run([reconstructions, original_input])
+            plt.matshow(np.hstack([sample.reshape(28 * episode_length, 28),
+                                   original.reshape(28 * episode_length, 28)]),
+                        cmap=plt.get_cmap('Greys'))
+            plt.show()
+            plt.close()
+        sys.exit()
 
     for epochs, lr in zip([250, 250, 250], [1e-3, 3e-4, 1e-4]):
         for epoch in xrange(epochs):
@@ -423,14 +435,6 @@ with tf.Session() as sess:
                     for t in xrange(episode_length):
                         msg += ' %.2f' % pred_lb[t]
                     log.info(msg)
-
-                if np.random.rand() < 0.01:
-                    sample, original = sess.run([reconstructions, original_input])
-                    plt.matshow(np.hstack([sample.reshape(28 * episode_length, 28),
-                                           original.reshape(28 * episode_length, 28)]),
-                                cmap=plt.get_cmap('Greys'))
-                    plt.savefig('samples.png')
-                    plt.close()
 
             log.debug('time for epoch: %f', (time.time() - epoch_started))
 
