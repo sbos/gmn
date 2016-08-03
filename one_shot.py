@@ -119,8 +119,8 @@ class ParamRecognition:
             mem.append(scg.batch_repeat(self.dummy_mem, state))
             params.append(scg.batch_repeat(self.dummy_param, state))
 
-        for i in xrange(time_step):
-            param, cell = self.encode_source(state, observations[i])
+        for t in xrange(time_step):
+            param, cell = self.encode_source(state, observations[t])
 
             def transform(input=None):
                 return tf.expand_dims(input, 1)
@@ -143,31 +143,31 @@ class ParamRecognition:
         return scg.AttentiveReader()(attention=attention, mem=features)
 
 
-def lower_bound(weights):
+def lower_bound(w):
     vlb_gen = 0.
 
     for i in xrange(episode_length):
-        vlb_gen += tf.reduce_mean(weights[i, i, :])
+        vlb_gen += tf.reduce_mean(w[i, i, :])
 
     return vlb_gen
 
 
-def predictive_lb(weights):
-    ll = [0. for i in xrange(episode_length)]
+def predictive_lb(w):
+    ll = [0.] * episode_length
 
     for i in xrange(len(ll)):
-        ll[i] += tf.reduce_mean(weights[i, i, :])
+        ll[i] += tf.reduce_mean(w[i, i, :])
 
     return tf.pack(ll)
 
 
-def predictive_ll(weights):
-    ll = [0. for i in xrange(episode_length)]
+def predictive_ll(w):
+    ll = [0.] * episode_length
 
     for i in xrange(len(ll)):
-        max_w = tf.reduce_max(weights[i, i, :])
-        w = weights[i, i, :] - max_w
-        ll[i] += tf.log(tf.reduce_mean(tf.exp(w))) + max_w
+        max_w = tf.reduce_max(w[i, i, :])
+        adjusted_w = w[i, i, :] - max_w
+        ll[i] += tf.log(tf.reduce_mean(tf.exp(adjusted_w))) + max_w
 
     return tf.pack(ll)
 
@@ -269,26 +269,26 @@ class VAE:
         gen_ll = {}
         rec_ll = {}
 
-        # weights[t][i] -- likelihood ratio for the i-th object after t objects has been seen
-        weights = [0.] * (episode_length+1)
+        # w[t][i] -- likelihood ratio for the i-th object after t objects has been seen
+        w = [0.] * (episode_length+1)
 
         for i in xrange(episode_length+1):
             for j in xrange(0, min(i+1, episode_length)):
                 scg.likelihood(self.z[i][j], cache, rec_ll)
                 scg.likelihood(self.x[i][j], cache, gen_ll)
 
-            weights[i] = [None] * episode_length
+            w[i] = [None] * episode_length
 
             for j in xrange(min(i+1, episode_length)):
                 local_ll = gen_ll[VAE.observed_name(i, j)] + gen_ll[VAE.hidden_name(i, j)] \
                            - rec_ll[VAE.hidden_name(i, j)]
-                weights[i][j] = local_ll
+                w[i][j] = local_ll
             for j in xrange(i+1, episode_length):
-                weights[i][j] = tf.zeros(tf.shape(weights[i][0]))
+                w[i][j] = tf.zeros(tf.shape(w[i][0]))
 
-        weights = tf.pack(weights)
+        w = tf.pack(w)
 
-        return weights
+        return w
 
 
 data_queue = tf.FIFOQueue(1000, tf.float32, shapes=[episode_length, data_dim])
@@ -415,10 +415,13 @@ with tf.Session() as sess:
             pred_ll = sess.run(target, feed_dict={input_data: batch_data})
             avg_predictive_ll += (pred_ll - avg_predictive_ll) / (j+1)
 
-            msg = 'testing %d' % j
+            msg = '\rtesting %d' % j
             for t in xrange(episode_length):
                 msg += ' %.2f' % avg_predictive_ll[t]
-            log.info(msg)
+            sys.stdout.write(msg)
+            if j == args.test_episodes-1:
+                print
+                log.info(msg)
 
     num_epochs = 0
     done_epochs = epoch_passed.eval(sess)
@@ -472,14 +475,17 @@ with tf.Session() as sess:
                 continue
 
             epoch_started = time.time()
-            for batch in xrange(24345 / batch_size / episode_length):
+            total_batches = 24345 / batch_size / episode_length
+            for batch in xrange(total_batches):
                 lb, pred_lb, i, _ = sess.run([avg_vlb, avg_pred_lb, global_step, train_op],
                                              feed_dict={learning_rate: lr})
 
-                if np.random.rand() < 0.02:
-                    msg = '\repoch {0}, batch {1} '.format(epoch, i)
-                    for t in xrange(episode_length):
-                        msg += ' %.2f' % pred_lb[t]
+                msg = '\repoch {0}, batch {1} '.format(epoch, i)
+                for t in xrange(episode_length):
+                    msg += ' %.2f' % pred_lb[t]
+                sys.stdout.write(msg)
+                if batch == total_batches-1:
+                    print
                     log.info(msg)
 
             log.debug('time for epoch: %f', (time.time() - epoch_started))
