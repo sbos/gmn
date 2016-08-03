@@ -19,7 +19,9 @@ parser.add_argument('--test', type=int, default=None)
 parser.add_argument('--max-classes', type=int, default=2)
 parser.add_argument('--test-episodes', type=int, default=1000)
 parser.add_argument('--reconstructions', action='store_const', const=True)
+parser.add_argument('--generate', type=int, default=None)
 parser.add_argument('--test-dataset', type=str, default='data/test_small_aug4.npz')
+parser.add_argument('--batch', type=int, default=20)
 args = parser.parse_args()
 
 data_dim = 28*28
@@ -110,9 +112,12 @@ class ParamRecognition:
     def encode_query(self, state, z):
         return self.query_encoder(input=scg.concat([z, state]))
 
-    def build_memory(self, state, observations, time_step):
-        mem = [scg.batch_repeat(self.dummy_mem, state)]
-        params = [scg.batch_repeat(self.dummy_param, state)]
+    def build_memory(self, state, observations, time_step, dummy=True):
+        mem = []
+        params = []
+        if dummy:
+            mem.append(scg.batch_repeat(self.dummy_mem, state))
+            params.append(scg.batch_repeat(self.dummy_param, state))
 
         for i in xrange(time_step):
             param, cell = self.encode_source(state, observations[i])
@@ -216,11 +221,17 @@ class VAE:
 
         state = scg.BatchRepeat()(batch=scg.StealBatch()(input=self.obs[0][0]),
                                   input=self.init_state)
+        self.states = []
+        self.mem = []
+        self.clear_mem = []
         for timestep in xrange(episode_length+1):
             self.z.append([])
             self.x.append([])
+            self.states.append(state)
 
             resources = self.par.build_memory(state, self.obs[timestep], timestep)
+            self.mem.append(resources)
+            self.clear_mem.append(self.par.build_memory(state, self.obs[timestep], timestep, False))
 
             for j in xrange(min(timestep+1, episode_length)):
                 param = self.par.query(resources, state,
@@ -230,14 +241,22 @@ class VAE:
                                                            param,
                                                            VAE.hidden_name(timestep, j)))
 
-                z_prior = self.gen.generate_prior(state, VAE.hidden_name(timestep, j))
-                param = self.par.query(resources, state,
-                                       self.par.encode_query(state, z_prior))
-                self.x[timestep].append(self.gen.generate(z_prior, param,
-                                                          VAE.observed_name(timestep, j)))
+                self.x[timestep].append(self.generate(timestep, j))
 
             if self.par is not None and timestep < episode_length:
                 state = self.par.update(state, self.obs[timestep][timestep])
+
+    def generate(self, timestep, j, dummy=True):
+        state = self.states[timestep]
+        mem = self.mem
+        if not dummy:
+            mem = self.clear_mem
+        resources = mem[timestep]
+
+        z_prior = self.gen.generate_prior(state, VAE.hidden_name(timestep, j))
+        param = self.par.query(resources, state,
+                               self.par.encode_query(state, z_prior))
+        return self.gen.generate(z_prior, param, VAE.observed_name(timestep, j))
 
     def sample(self, cache=None):
         for i in xrange(episode_length+1):
@@ -276,7 +295,7 @@ data_queue = tf.FIFOQueue(1000, tf.float32, shapes=[episode_length, data_dim])
 
 new_data = tf.placeholder(tf.float32, [None, episode_length, data_dim])
 enqueue_op = data_queue.enqueue_many(new_data)
-batch_size = 20 if args.test is None else args.test
+batch_size = args.batch if args.test is None else args.test
 input_data = data_queue.dequeue_many(batch_size)
 binarized = tf.cast(tf.less_equal(tf.random_uniform(tf.shape(input_data)), input_data), tf.float32)
 
@@ -314,8 +333,6 @@ def grads_and_vars(vars_and_losses):
 
 opt_opt = tf.train.AdamOptimizer(beta2=0.99, epsilon=1e-4, learning_rate=learning_rate,
                                  use_locking=False).minimize(-vlb_gen, global_step)
-
-gen_cache = vae.x[0][0].backtrace(batch=5)
 
 with tf.control_dependencies([opt_opt]):
     train_op = tf.group(avg_op)
@@ -417,6 +434,35 @@ with tf.Session() as sess:
                         cmap=plt.get_cmap('Greys'))
             plt.show()
             plt.close()
+        sys.exit()
+    elif args.generate:
+        assert args.generate <= episode_length
+
+        time_step = args.generate
+        num_object = args.generate+1
+
+        obs = vae.generate(time_step, num_object, False)
+        obs.backtrace(train_samples)
+
+        data = load_data(args.test_dataset)
+        input_batch = np.zeros([batch_size, episode_length, data_dim])
+
+        logits = tf.sigmoid(train_samples[VAE.observed_name(time_step, num_object) + '_logit'])
+
+        while True:
+            put_new_data(data, input_batch)
+            for j in xrange(1, input_batch.shape[0]):
+                input_batch[j] = input_batch[0]
+
+            img = sess.run(logits, feed_dict={input_data: input_batch})
+
+            f, (ax1, ax2) = plt.subplots(1, 2, sharey=True, squeeze=True)
+            ax1.matshow(input_batch[0].reshape(input_batch.shape[0] * 28, 28), cmap=plt.get_cmap('Greys'))
+            ax2.matshow(img.reshape(input_batch.shape[0] * 28, 28), cmap=plt.get_cmap('Greys'))
+            plt.subplots_adjust(wspace=None, hspace=None)
+            plt.show()
+            plt.close()
+
         sys.exit()
 
     for epochs, lr in zip([250, 250, 250], [1e-3, 3e-4, 1e-4]):
