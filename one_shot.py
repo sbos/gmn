@@ -42,6 +42,8 @@ class GenerativeModel:
         self.h2 = scg.Affine(200 + param_dim, 200, fun='prelu', init=scg.he_normal)
         self.logit = scg.Affine(200, data_dim, init=scg.he_normal)
 
+        self.strength = scg.Affine(state_dim, 1, init=scg.he_normal)
+
     def generate_prior(self, state, hidden_name):
         hp = self.hp(input=state)
         z = self.prior(name=hidden_name, mu=self.mu(input=hp),
@@ -57,7 +59,7 @@ class GenerativeModel:
 
 
 class RecognitionModel:
-    def __init__(self, hidden_dim, param_dim):
+    def __init__(self, hidden_dim, param_dim, state_dim):
         self.hidden_dim = hidden_dim
         self.param_dim = param_dim
 
@@ -65,6 +67,8 @@ class RecognitionModel:
         self.h2 = scg.Affine(200 + param_dim, 200, fun='prelu', init=scg.he_normal)
         self.mu = scg.Affine(200, hidden_dim, init=scg.he_normal)
         self.sigma = scg.Affine(200, hidden_dim, init=scg.he_normal)
+
+        self.strength = scg.Affine(state_dim, 1, init=scg.he_normal)
 
     def recognize(self, obs, param, hidden_name):
         # h = self.h1(input=param)
@@ -95,7 +99,6 @@ class ParamRecognition:
                                                                     -1. / mem_dim,
                                                                     1. / mem_dim)))()
         self.dummy_param = scg.Constant(tf.Variable(tf.zeros([1, param_dim])))()
-        self.strength = scg.Affine(state_dim, 1, init=scg.he_normal)
 
         # self.source_encoder = scg.Affine(data_dim + state_dim, param_dim,
         #                                  fun='prelu', init=scg.he_normal)
@@ -139,11 +142,11 @@ class ParamRecognition:
         params, mem = scg.concat(params, 1), scg.concat(mem, 1)
         return params, mem
 
-    def query(self, resources, state, query):
+    def query(self, resources, query, strength):
         features, sources = resources
 
         attention = scg.Attention()(mem=sources, key=query,
-                                    strength=self.strength(input=state))
+                                    strength=strength)
 
         return scg.AttentiveReader()(attention=attention, mem=features)
 
@@ -205,7 +208,7 @@ class VAE:
             self.gen_vars = self.both_vars + [var for var in tf.all_variables() if var.name.startswith(vs.name)]
 
         with tf.variable_scope('recognition') as vs:
-            self.rec = rec(hidden_dim, param_dim)
+            self.rec = rec(hidden_dim, param_dim, state_dim)
             self.par = par
 
             if par is not None:
@@ -239,8 +242,9 @@ class VAE:
             self.clear_mem.append(self.par.build_memory(state, self.obs[timestep], timestep, False))
 
             for j in xrange(min(timestep+1, episode_length)):
-                param = self.par.query(resources, state,
-                                       self.par.encode_source(state, self.obs[timestep][j])[1])
+                param = self.par.query(resources,
+                                       self.par.encode_source(state, self.obs[timestep][j])[1],
+                                       self.rec.strength(input=state))
 
                 self.z[timestep].append(self.rec.recognize(self.obs[timestep][j],
                                                            param,
@@ -259,8 +263,9 @@ class VAE:
         resources = mem[timestep]
 
         z_prior = self.gen.generate_prior(state, VAE.hidden_name(timestep, j))
-        param = self.par.query(resources, state,
-                               self.par.encode_query(state, z_prior))
+        param = self.par.query(resources,
+                               self.par.encode_query(state, z_prior),
+                               self.gen.strength(input=state))
         return self.gen.generate(z_prior, param, VAE.observed_name(timestep, j))
 
     def sample(self, cache=None):
