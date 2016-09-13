@@ -39,8 +39,8 @@ class GenerativeModel:
         self.prior = scg.Normal(self.hidden_dim)
 
         self.h1 = scg.Affine(hidden_dim, 200, fun='prelu', init=scg.he_normal)
-        # self.h2 = scg.Affine(200, 200, fun='prelu', init=scg.he_normal)
-        self.logit = scg.Affine(200 + param_dim, data_dim, init=scg.he_normal)
+        self.h2 = scg.Affine(200 + param_dim, 200, fun='prelu', init=scg.he_normal)
+        self.logit = scg.Affine(200, data_dim, init=scg.he_normal)
 
     def generate_prior(self, state, hidden_name):
         hp = self.hp(input=state)
@@ -50,8 +50,9 @@ class GenerativeModel:
 
     def generate(self, z, param, observed_name):
         h = self.h1(input=z)
-        # h = self.h2(input=h)
-        logit = self.logit(input=scg.concat([h, param]), name=observed_name + '_logit')
+        # h = h + param + h2(h, param)
+        h = scg.add(scg.add(self.h2(input=scg.concat([h, param])), h), param)
+        logit = self.logit(input=h, name=observed_name + '_logit')
         return scg.Bernoulli()(logit=logit, name=observed_name)
 
 
@@ -60,15 +61,16 @@ class RecognitionModel:
         self.hidden_dim = hidden_dim
         self.param_dim = param_dim
 
-        self.h1 = scg.Affine(param_dim + data_dim, 200, fun='prelu', init=scg.he_normal)
-        # self.h2 = scg.Affine(200, 200, fun='prelu', init=scg.he_normal)
+        self.h1 = scg.Affine(data_dim, 200, fun='prelu', init=scg.he_normal)
+        self.h2 = scg.Affine(200 + param_dim, 200, fun='prelu', init=scg.he_normal)
         self.mu = scg.Affine(200, hidden_dim, init=scg.he_normal)
         self.sigma = scg.Affine(200, hidden_dim, init=scg.he_normal)
 
     def recognize(self, obs, param, hidden_name):
         # h = self.h1(input=param)
-        h = self.h1(input=scg.concat([obs, param]))
-        # h = self.h2(input=h)
+        h = self.h1(input=obs)
+        # h = h + param + h2(h, param)
+        h = scg.add(scg.add(self.h2(input=scg.concat([h, param])), h), param)
         mu = self.mu(input=h)
         sigma = self.sigma(input=h)
         z = scg.Normal(self.hidden_dim)(mu=mu, pre_sigma=sigma, name=hidden_name)
@@ -84,6 +86,7 @@ class ParamRecognition:
         self.img_features = scg.Affine(data_dim, feature_dim, fun='prelu', init=scg.he_normal)
         self.source_encoder = scg.Affine(feature_dim + state_dim, mem_dim,
                                          fun='prelu', init=scg.he_normal)
+        # self.z_project = scg.Affine(hidden_dim, 100, fun='prelu', init=scg.he_normal)
         self.query_encoder = scg.Affine(hidden_dim + state_dim, mem_dim,
                                          fun='prelu', init=scg.he_normal)
         self.param_encoder = scg.Affine(data_dim + state_dim, param_dim,
@@ -112,6 +115,8 @@ class ParamRecognition:
     def encode_query(self, state, z):
         return self.query_encoder(input=scg.concat([z, state]))
 
+    # returns parameters and features
+    # latter are used to compute kernel weights
     def build_memory(self, state, observations, time_step, dummy=True):
         mem = []
         params = []
@@ -460,8 +465,8 @@ with tf.Session() as sess:
             img = sess.run(logits, feed_dict={input_data: input_batch})
 
             f, (ax1, ax2) = plt.subplots(1, 2, sharey=True, squeeze=True)
-            ax1.matshow(input_batch[0].reshape(input_batch.shape[0] * 28, 28), cmap=plt.get_cmap('Greys'))
-            ax2.matshow(img.reshape(input_batch.shape[0] * 28, 28), cmap=plt.get_cmap('Greys'))
+            ax1.matshow(input_batch[0].reshape(input_batch.shape[1] * 28, 28), cmap=plt.get_cmap('Greys'))
+            ax2.matshow(img.reshape(input_batch.shape[1] * 28, 28), cmap=plt.get_cmap('Greys'))
             plt.subplots_adjust(wspace=None, hspace=None)
             plt.show()
             plt.close()
