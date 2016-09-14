@@ -38,9 +38,13 @@ class GenerativeModel:
         self.pre_sigma = scg.Affine(200, self.hidden_dim, None, scg.he_normal)
         self.prior = scg.Normal(self.hidden_dim)
 
-        self.h1 = scg.Affine(hidden_dim, 200, fun='prelu', init=scg.he_normal)
-        self.h2 = scg.Affine(200 + param_dim, 200, fun='prelu', init=scg.he_normal)
-        self.logit = scg.Affine(200, data_dim, init=scg.he_normal)
+        self.h1 = scg.Affine(hidden_dim + param_dim, 3*3*32, fun='prelu', init=scg.he_normal)
+        self.conv1 = scg.Convolution2d([3, 3, 32], [2, 2], 32, padding='VALID', fun='prelu',
+                                       transpose=True, stride=2)
+        self.conv2 = scg.Convolution2d(self.conv1.shape(), [4, 4], 32, padding='VALID', fun='prelu',
+                                       transpose=True, stride=2)
+        self.conv3 = scg.Convolution2d(self.conv2.shape(), [2, 2], 1, padding='VALID',
+                                       transpose=True, stride=2)
 
         self.strength = scg.Affine(state_dim, 1, init=scg.he_normal)
 
@@ -51,11 +55,11 @@ class GenerativeModel:
         return z
 
     def generate(self, z, param, observed_name):
-        h = self.h1(input=z)
-        # h = h + param + h2(h, param)
-        h = scg.add(scg.add(self.h2(input=scg.concat([h, param])), h), param)
-        logit = self.logit(input=h, name=observed_name + '_logit')
-        return scg.Bernoulli()(logit=logit, name=observed_name)
+        h = self.h1(input=scg.concat([z, param]))
+        h = self.conv1(input=h)
+        h = self.conv2(input=h)
+        h = self.conv3(input=h, name=observed_name + '_logit')
+        return scg.Bernoulli()(logit=h, name=observed_name)
 
 
 class RecognitionModel:
@@ -63,20 +67,21 @@ class RecognitionModel:
         self.hidden_dim = hidden_dim
         self.param_dim = param_dim
 
-        self.h1 = scg.Affine(data_dim, 200, fun='prelu', init=scg.he_normal)
-        self.h2 = scg.Affine(200 + param_dim, 200, fun='prelu', init=scg.he_normal)
-        self.mu = scg.Affine(200, hidden_dim, init=scg.he_normal)
-        self.sigma = scg.Affine(200, hidden_dim, init=scg.he_normal)
+        self.h1 = scg.Convolution2d([28, 28, 1], [5, 5], 16, padding='VALID', fun='prelu')
+        self.h2 = scg.Convolution2d(self.h1.shape(), [5, 5], 32, padding='VALID', fun='prelu')
+        self.h3 = scg.Convolution2d(self.h2.shape(), [2, 2], 32, padding='VALID', fun='prelu', stride=2)
+        self.mu = scg.Affine(np.prod(self.h3.shape()) + param_dim, hidden_dim, init=scg.he_normal)
+        self.sigma = scg.Affine(np.prod(self.h3.shape()) + param_dim, hidden_dim, init=scg.he_normal)
 
         self.strength = scg.Affine(state_dim, 1, init=scg.he_normal)
 
     def recognize(self, obs, param, hidden_name):
-        # h = self.h1(input=param)
-        h = self.h1(input=obs)
-        # h = h + param + h2(h, param)
-        h = scg.add(scg.add(self.h2(input=scg.concat([h, param])), h), param)
-        mu = self.mu(input=h)
-        sigma = self.sigma(input=h)
+        h = self.h1(input=obs, name=hidden_name + '_conv1')
+        h = self.h2(input=h, name=hidden_name + '_conv2')
+        h = self.h3(input=h, name=hidden_name + '_conv3')
+        h = scg.concat([h, param])
+        mu = self.mu(input=h, name=hidden_name + '_mu')
+        sigma = self.sigma(input=h, name=hidden_name + '_sigma')
         z = scg.Normal(self.hidden_dim)(mu=mu, pre_sigma=sigma, name=hidden_name)
         return z
 
@@ -265,7 +270,7 @@ class VAE:
         z_prior = self.gen.generate_prior(state, VAE.hidden_name(timestep, j))
         param = self.par.query(resources,
                                self.par.encode_query(state, z_prior),
-                               self.gen.strength(input=state))
+                               self.gen.strength(input=state, name='gen_strength_%d_%d' % (timestep, j)))
         return self.gen.generate(z_prior, param, VAE.observed_name(timestep, j))
 
     def sample(self, cache=None):
@@ -454,6 +459,9 @@ with tf.Session() as sess:
         time_step = args.generate
         num_object = args.generate+1
 
+        # train_samples['gen_strength_%d_%d' % (time_step, num_object)] =
+        # np.ones([batch_size, 1], dtype=np.float32) * 100.
+
         obs = vae.generate(time_step, num_object, False)
         obs.backtrace(train_samples)
 
@@ -461,13 +469,14 @@ with tf.Session() as sess:
         input_batch = np.zeros([batch_size, episode_length, data_dim])
 
         logits = tf.sigmoid(train_samples[VAE.observed_name(time_step, num_object) + '_logit'])
+        strength = train_samples['gen_strength_%d_%d' % (time_step, num_object)]
 
         while True:
             put_new_data(data, input_batch)
             for j in xrange(1, input_batch.shape[0]):
                 input_batch[j] = input_batch[0]
 
-            img = sess.run(logits, feed_dict={input_data: input_batch})
+            img, gen_strength = sess.run([logits, strength], feed_dict={input_data: input_batch})
 
             f, (ax1, ax2) = plt.subplots(1, 2, sharey=True, squeeze=True)
             ax1.matshow(input_batch[0].reshape(input_batch.shape[1] * 28, 28), cmap=plt.get_cmap('Greys'))

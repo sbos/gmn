@@ -1,7 +1,7 @@
 from core import *
 
 
-def glorot_normal(input_size, output_size, fun=None):
+def glorot_normal(input_size, output_size, fun=None, shape=None):
     base = {
         'tanh': 6.,
         'sigmoid': 6.,
@@ -14,12 +14,14 @@ def glorot_normal(input_size, output_size, fun=None):
 
     stddev = np.sqrt(base[fun] / (input_size + output_size))
 
-    A = tf.Variable(tf.truncated_normal_initializer(stddev=stddev)((input_size, output_size)))
+    if shape is None:
+        shape = [input_size, output_size]
+    A = tf.Variable(tf.truncated_normal_initializer(stddev=stddev)(shape))
 
     return A
 
 
-def he_normal(input_size, output_size, fun=None):
+def he_normal(input_size, output_size, fun=None, shape=None):
     base = {
         'tanh': 1.,
         'sigmoid': 1.,
@@ -32,7 +34,10 @@ def he_normal(input_size, output_size, fun=None):
 
     stddev = np.sqrt(base[fun] / input_size)
 
-    A = tf.Variable(tf.truncated_normal_initializer(stddev=stddev)((input_size, output_size)))
+    if shape is None:
+        shape = [input_size, output_size]
+
+    A = tf.Variable(tf.truncated_normal_initializer(stddev=stddev)(shape))
 
     return A
 
