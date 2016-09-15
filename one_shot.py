@@ -87,37 +87,40 @@ class RecognitionModel:
 
 
 class ParamRecognition:
-    def __init__(self, state_dim, hidden_dim, feature_dim=100, param_dim=100, mem_dim=100):
-        self.feature_dim = feature_dim
+    def __init__(self, state_dim, hidden_dim, param_dim=100, mem_dim=100):
         self.param_dim = param_dim
 
-        self.cell = scg.GRU(data_dim, state_dim, fun='prelu', init=scg.he_normal)
-        self.img_features = scg.Affine(data_dim, feature_dim, fun='prelu', init=scg.he_normal)
-        self.source_encoder = scg.Affine(feature_dim + state_dim, mem_dim,
+        # source
+        self.source_conv1 = scg.Convolution2d([28, 28, 1], [5, 5], 32, padding='VALID', fun='prelu')
+        self.source_conv2 = scg.Convolution2d(self.source_conv1.shape(), [4, 4], 16, padding='VALID',
+                                              fun='prelu', stride=2)
+        self.feature_dim = np.prod(self.source_conv2.shape())
+        self.source_encoder = scg.Affine(self.feature_dim + state_dim, mem_dim,
                                          fun='prelu', init=scg.he_normal)
-        # self.z_project = scg.Affine(hidden_dim, 100, fun='prelu', init=scg.he_normal)
+
+        self.cell = scg.GRU(self.feature_dim, state_dim, fun='prelu', init=scg.he_normal)
+
         self.query_encoder = scg.Affine(hidden_dim + state_dim, mem_dim,
                                          fun='prelu', init=scg.he_normal)
-        self.param_encoder = scg.Affine(data_dim + state_dim, param_dim,
+        self.param_encoder = scg.Affine(self.feature_dim + state_dim, param_dim,
                                         fun='prelu', init=scg.he_normal)
         self.dummy_mem = scg.Constant(tf.Variable(tf.random_uniform([1, mem_dim],
                                                                     -1. / mem_dim,
                                                                     1. / mem_dim)))()
         self.dummy_param = scg.Constant(tf.Variable(tf.zeros([1, param_dim])))()
 
-        # self.source_encoder = scg.Affine(data_dim + state_dim, param_dim,
-        #                                  fun='prelu', init=scg.he_normal)
-        # self.query_encoder = scg.Affine(data_dim + state_dim, param_dim,
-        #                                 fun='prelu', init=scg.he_normal)
-
     def update(self, state, obs):
         state = self.cell(input=obs, state=state)
         return state
 
+    def get_features(self, obs):
+        features = self.source_conv1(input=obs)
+        features = self.source_conv2(input=features)
+        return features
+
     def encode_source(self, state, obs):
-        features = self.img_features(input=obs)
-        # features = obs
-        return self.param_encoder(input=scg.concat([obs, state])), \
+        features = self.get_features(obs)
+        return self.param_encoder(input=scg.concat([features, state])), \
             self.source_encoder(input=scg.concat([features, state]))
 
     def encode_query(self, state, z):
@@ -201,7 +204,6 @@ class VAE:
     def __init__(self, input_data, hidden_dim, gen, rec, par=None):
         state_dim = 200
         param_dim = 200
-        feature_dim = 100
 
         with tf.variable_scope('both') as vs:
             self.init_state = scg.Constant(tf.Variable(tf.zeros((state_dim,)), trainable=True))()
@@ -217,7 +219,7 @@ class VAE:
             self.par = par
 
             if par is not None:
-                self.par = par(state_dim, hidden_dim, feature_dim, param_dim)
+                self.par = par(state_dim, hidden_dim, param_dim)
 
             self.rec_vars = self.both_vars + [var for var in tf.all_variables() if var.name.startswith(vs.name)]
 
@@ -258,7 +260,7 @@ class VAE:
                 self.x[timestep].append(self.generate(timestep, j))
 
             if self.par is not None and timestep < episode_length:
-                state = self.par.update(state, self.obs[timestep][timestep])
+                state = self.par.update(state, self.par.get_features(self.obs[timestep][timestep]))
 
     def generate(self, timestep, j, dummy=True):
         state = self.states[timestep]
