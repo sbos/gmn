@@ -21,6 +21,7 @@ parser.add_argument('--test-episodes', type=int, default=1000)
 parser.add_argument('--reconstructions', action='store_const', const=True)
 parser.add_argument('--generate', type=int, default=None)
 parser.add_argument('--test-dataset', type=str, default='data/test_small_aug4.npz')
+parser.add_argument('--train-dataset', type=str, default='data/train_small_aug10.npz')
 parser.add_argument('--batch', type=int, default=20)
 args = parser.parse_args()
 
@@ -392,7 +393,7 @@ with tf.Session() as sess:
         log.addHandler(logging.FileHandler(args.checkpoint + '.log'))
 
     def data_loop(coordinator=None):
-        train_data = load_data('data/train_small_aug10.npz') if not args.reconstructions else load_data(args.test_dataset)
+        train_data = load_data(args.train_dataset) if not args.reconstructions else load_data(args.test_dataset)
         batch = np.zeros((1, episode_length, data_dim))
         # test_data = np.load('data/test_small.npz')
 
