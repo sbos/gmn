@@ -1,10 +1,10 @@
 from core import *
-from deterministic import dispatch_function, glorot_normal
+from deterministic import dispatch_function, glorot_normal, he_normal
 
 
 class Convolution2d(NodePrototype):
     def __init__(self, input_shape, kernel_size, num_filters, stride=1,
-                 padding='SAME', fun=None, init=glorot_normal,
+                 padding='SAME', fun=None, init=he_normal,
                  transpose=False):
         NodePrototype.__init__(self)
 
@@ -24,13 +24,14 @@ class Convolution2d(NodePrototype):
         if fun == 'prelu':
             self.p = tf.Variable(tf.random_uniform((self.num_filters,), minval=-0.01, maxval=0.01))
 
+        factor = np.prod(kernel_size)
         if self.transpose:
             self.bias = tf.zeros([self.output_shape[-1]])
-            self.filters = init(np.prod(kernel_size), num_filters, fun,
+            self.filters = init(factor * num_filters, factor * self.input_shape[-1], fun,
                                 kernel_size + [num_filters, self.input_shape[-1]])
         else:
             self.bias = tf.zeros([num_filters])
-            self.filters = init(np.prod(kernel_size), num_filters, fun,
+            self.filters = init(factor * self.input_shape[-1], factor * num_filters, fun,
                                 kernel_size + [self.input_shape[-1], num_filters])
 
     def shape(self):

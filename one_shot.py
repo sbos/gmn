@@ -82,10 +82,10 @@ class RecognitionModel:
         self.hidden_dim = hidden_dim
         self.param_dim = param_dim
 
-        self.h1 = scg.Convolution2d([28, 28, 1], [4, 4], 32, padding='VALID', fun='prelu')
-        self.h2 = scg.Convolution2d(self.h1.shape(), [3, 3], 32, padding='VALID', fun='prelu', stride=2)
-        self.h3 = scg.Convolution2d(self.h2.shape(), [3, 3], 16, padding='VALID', fun='prelu')
-        self.h4 = scg.Convolution2d(self.h3.shape(), [2, 2], 16, padding='VALID', fun='prelu', stride=2)
+        self.h1 = scg.Convolution2d([28, 28, 1], [4, 4], 16, padding='VALID', fun='prelu')
+        self.h2 = scg.Convolution2d(self.h1.shape(), [3, 3], 16, padding='VALID', fun='prelu', stride=2)
+        self.h3 = scg.Convolution2d(self.h2.shape(), [3, 3], 32, padding='VALID', fun='prelu')
+        self.h4 = scg.Convolution2d(self.h3.shape(), [2, 2], 32, padding='VALID', fun='prelu', stride=2)
         self.mu = scg.Affine(np.prod(self.h4.shape()), hidden_dim, init=scg.he_normal)
         self.sigma = scg.Affine(np.prod(self.h4.shape()), hidden_dim, init=scg.he_normal)
 
