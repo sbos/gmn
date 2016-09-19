@@ -133,14 +133,14 @@ def slice(input, start, size):
     return Slice(start, size)(input)
 
 
-def apply(f, **inputs):
+def apply(f, name=None, **inputs):
     class Apply(NodePrototype):
         def __init__(self):
             NodePrototype.__init__(self)
 
         def flow(self, **inputs):
             return f(**inputs)
-    return Apply()(**inputs)
+    return Apply()(name=name, **inputs)
 
 
 class Pack(NodePrototype):

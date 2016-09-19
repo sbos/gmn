@@ -64,11 +64,36 @@ class Convolution2d(NodePrototype):
             args['p'] = self.p
 
         output = dispatch_function(output, self.fun, **args)
+        return NodePrototype.flatten(output)
 
-        output_shape = tf.unpack(tf.shape(output))[1:]
-        flat_shape = 1
-        for d in output_shape:
-            flat_shape *= d
 
-        return tf.reshape(output, tf.pack([batch, flat_shape]))
+class Padding(NodePrototype):
+    def __init__(self, input_shape, paddings):
+        NodePrototype.__init__(self)
 
+        self.input_shape = input_shape
+        self.paddings = paddings
+
+    def flow(self, input=None):
+        assert input is not None
+        batch = tf.shape(input)[0]
+        x = tf.reshape(input, tf.pack([batch] + self.input_shape))
+        x = tf.pad(x, [[0, 0]] + self.paddings)
+        return NodePrototype.flatten(x)
+
+
+class Pooling(NodePrototype):
+    def __init__(self, input_shape, kernel_size, strides=[1, 1], padding='VALID', fun='avg'):
+        NodePrototype.__init__(self)
+        self.input_shape = input_shape
+        self.kernel_size = kernel_size
+        self.strides = [1] + strides + [1]
+        self.padding = padding
+        self.fun = fun
+
+    def flow(self, input=None):
+        funs = {
+            'avg': tf.nn.avg_pool,
+            'max': tf.nn.max_pool
+        }
+        return funs[self.fun](input, self.kernel_size, self.strides, self.padding)

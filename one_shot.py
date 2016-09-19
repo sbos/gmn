@@ -39,27 +39,41 @@ class GenerativeModel:
         self.pre_sigma = scg.Affine(200, self.hidden_dim, None, scg.he_normal)
         self.prior = scg.Normal(self.hidden_dim)
 
-        self.h1 = scg.Affine(hidden_dim + param_dim, 3*3*32, fun='prelu', init=scg.he_normal)
-        self.conv1 = scg.Convolution2d([3, 3, 32], [2, 2], 32, padding='VALID', fun='prelu',
+        self.h1 = scg.Affine(hidden_dim, 2*2*32, fun=None, init=scg.he_normal)
+        self.conv1 = scg.Convolution2d([2, 2, 32], [2, 2], 32, padding='VALID', fun='prelu',
                                        transpose=True, stride=2)
-        self.conv2 = scg.Convolution2d(self.conv1.shape(), [4, 4], 32, padding='VALID', fun='prelu',
+        self.conv2 = scg.Convolution2d(self.conv1.shape(), [2, 2], 32, padding='VALID', fun='prelu',
                                        transpose=True, stride=2)
-        self.conv3 = scg.Convolution2d(self.conv2.shape(), [2, 2], 1, padding='VALID',
+        self.conv3 = scg.Convolution2d(self.conv2.shape(), [2, 2], 16, padding='VALID', fun='prelu',
+                                       transpose=True, stride=2)
+        self.conv4 = scg.Convolution2d(self.conv3.shape(), [2, 2], 1, padding='VALID',
                                        transpose=True, stride=2)
 
         self.strength = scg.Affine(state_dim, 1, init=scg.he_normal)
 
     def generate_prior(self, state, hidden_name):
-        hp = self.hp(input=state)
-        z = self.prior(name=hidden_name, mu=self.mu(input=hp),
-                       pre_sigma=self.pre_sigma(input=hp))
+        # hp = self.hp(input=state)
+        # z = self.prior(name=hidden_name, mu=self.mu(input=hp),
+        #                pre_sigma=self.pre_sigma(input=hp))
+
+        z = self.prior(name=hidden_name)
         return z
 
     def generate(self, z, param, observed_name):
-        h = self.h1(input=scg.concat([z, param]))
+        h = self.h1(input=scg.concat([z]))
         h = self.conv1(input=h)
         h = self.conv2(input=h)
-        h = self.conv3(input=h, name=observed_name + '_logit')
+        h = self.conv3(input=h)
+        h = self.conv4(input=h)
+
+        def f(input=None):
+            batch = tf.shape(input)[0]
+            x = tf.reshape(input, tf.pack([batch, 32, 32]))
+            x = x[:, 2:, 2:]
+            x = x[:, :28, :28]
+            return scg.NodePrototype.flatten(x)
+
+        h = scg.apply(f, input=h, name=observed_name + '_logit')
         return scg.Bernoulli()(logit=h, name=observed_name)
 
 
@@ -68,19 +82,31 @@ class RecognitionModel:
         self.hidden_dim = hidden_dim
         self.param_dim = param_dim
 
-        self.h1 = scg.Convolution2d([28, 28, 1], [5, 5], 16, padding='VALID', fun='prelu')
-        self.h2 = scg.Convolution2d(self.h1.shape(), [5, 5], 32, padding='VALID', fun='prelu')
-        self.h3 = scg.Convolution2d(self.h2.shape(), [2, 2], 32, padding='VALID', fun='prelu', stride=2)
-        self.mu = scg.Affine(np.prod(self.h3.shape()) + param_dim, hidden_dim, init=scg.he_normal)
-        self.sigma = scg.Affine(np.prod(self.h3.shape()) + param_dim, hidden_dim, init=scg.he_normal)
+        self.h1 = scg.Convolution2d([28, 28, 1], [4, 4], 32, padding='VALID', fun='prelu')
+        self.h2 = scg.Convolution2d(self.h1.shape(), [3, 3], 32, padding='VALID', fun='prelu', stride=2)
+        self.h3 = scg.Convolution2d(self.h2.shape(), [3, 3], 16, padding='VALID', fun='prelu')
+        self.h4 = scg.Convolution2d(self.h3.shape(), [2, 2], 16, padding='VALID', fun='prelu', stride=2)
+        self.mu = scg.Affine(np.prod(self.h4.shape()), hidden_dim, init=scg.he_normal)
+        self.sigma = scg.Affine(np.prod(self.h4.shape()), hidden_dim, init=scg.he_normal)
 
         self.strength = scg.Affine(state_dim, 1, init=scg.he_normal)
 
+    def get_features(self, obs):
+        # h = scg.Padding([28, 28], [[2, 2], [2, 2]])(input=obs)
+        h = self.h1(input=obs)
+        h = self.h2(input=h)
+        h = self.h3(input=h)
+        h = self.h4(input=h)
+
+        return h
+
+    @property
+    def features_dim(self):
+        return np.prod(self.h4.shape())
+
     def recognize(self, obs, param, hidden_name):
-        h = self.h1(input=obs, name=hidden_name + '_conv1')
-        h = self.h2(input=h, name=hidden_name + '_conv2')
-        h = self.h3(input=h, name=hidden_name + '_conv3')
-        h = scg.concat([h, param])
+        h = self.get_features(obs)
+        # h = scg.concat([h, param])
         mu = self.mu(input=h, name=hidden_name + '_mu')
         sigma = self.sigma(input=h, name=hidden_name + '_sigma')
         z = scg.Normal(self.hidden_dim)(mu=mu, pre_sigma=sigma, name=hidden_name)
@@ -88,14 +114,15 @@ class RecognitionModel:
 
 
 class ParamRecognition:
-    def __init__(self, state_dim, hidden_dim, param_dim=100, mem_dim=100):
-        self.param_dim = param_dim
-
+    def __init__(self, state_dim, hidden_dim, mem_dim=100):
         # source
-        self.source_conv1 = scg.Convolution2d([28, 28, 1], [5, 5], 32, padding='VALID', fun='prelu')
-        self.source_conv2 = scg.Convolution2d(self.source_conv1.shape(), [4, 4], 16, padding='VALID',
+        self.source_conv1 = scg.Convolution2d([28, 28, 1], [5, 5], 16, padding='VALID', fun='prelu')
+        self.source_conv2 = scg.Convolution2d(self.source_conv1.shape(), [5, 5], 16, padding='VALID',
+                                              fun='prelu')
+        self.source_conv3 = scg.Convolution2d(self.source_conv2.shape(), [2, 2], 16, padding='VALID',
                                               fun='prelu', stride=2)
-        self.feature_dim = np.prod(self.source_conv2.shape())
+        self.feature_dim = np.prod(self.source_conv3.shape())
+        self.param_dim = 100
         self.source_encoder = scg.Affine(self.feature_dim + state_dim, mem_dim,
                                          fun='prelu', init=scg.he_normal)
 
@@ -103,12 +130,12 @@ class ParamRecognition:
 
         self.query_encoder = scg.Affine(hidden_dim + state_dim, mem_dim,
                                          fun='prelu', init=scg.he_normal)
-        self.param_encoder = scg.Affine(self.feature_dim + state_dim, param_dim,
+        self.param_encoder = scg.Affine(self.feature_dim + state_dim, self.param_dim,
                                         fun='prelu', init=scg.he_normal)
         self.dummy_mem = scg.Constant(tf.Variable(tf.random_uniform([1, mem_dim],
                                                                     -1. / mem_dim,
                                                                     1. / mem_dim)))()
-        self.dummy_param = scg.Constant(tf.Variable(tf.zeros([1, param_dim])))()
+        self.dummy_param = scg.Constant(tf.Variable(tf.zeros([1, self.param_dim])))()
 
     def update(self, state, obs):
         state = self.cell(input=obs, state=state)
@@ -117,15 +144,19 @@ class ParamRecognition:
     def get_features(self, obs):
         features = self.source_conv1(input=obs)
         features = self.source_conv2(input=features)
+        features = self.source_conv3(input=features)
         return features
 
     def encode_source(self, state, obs):
         features = self.get_features(obs)
         return self.param_encoder(input=scg.concat([features, state])), \
             self.source_encoder(input=scg.concat([features, state]))
+        # return self.param_encoder(input=features), \
+        #     self.source_encoder(input=features)
 
     def encode_query(self, state, z):
         return self.query_encoder(input=scg.concat([z, state]))
+        # return self.query_encoder(input=z)
 
     # returns parameters and features
     # latter are used to compute kernel weights
@@ -204,25 +235,21 @@ class VAE:
 
     def __init__(self, input_data, hidden_dim, gen, rec, par=None):
         state_dim = 200
-        param_dim = 200
 
         with tf.variable_scope('both') as vs:
             self.init_state = scg.Constant(tf.Variable(tf.zeros((state_dim,)), trainable=True))()
             self.both_vars = [var for var in tf.all_variables() if var.name.startswith(vs.name)]
 
-        with tf.variable_scope('generation') as vs:
-            self.gen = gen(hidden_dim, state_dim, param_dim)
-
-            self.gen_vars = self.both_vars + [var for var in tf.all_variables() if var.name.startswith(vs.name)]
-
         with tf.variable_scope('recognition') as vs:
-            self.rec = rec(hidden_dim, param_dim, state_dim)
-            self.par = par
-
-            if par is not None:
-                self.par = par(state_dim, hidden_dim, param_dim)
+            self.par = par(state_dim, hidden_dim)
+            self.rec = rec(hidden_dim, self.par.param_dim, state_dim)
 
             self.rec_vars = self.both_vars + [var for var in tf.all_variables() if var.name.startswith(vs.name)]
+
+        with tf.variable_scope('generation') as vs:
+            self.gen = gen(hidden_dim, state_dim, self.par.param_dim)
+
+            self.gen_vars = self.both_vars + [var for var in tf.all_variables() if var.name.startswith(vs.name)]
 
         self.z = []
         self.x = []
@@ -479,12 +506,21 @@ with tf.Session() as sess:
             for j in xrange(1, input_batch.shape[0]):
                 input_batch[j] = input_batch[0]
 
-            img, gen_strength = sess.run([logits, strength], feed_dict={input_data: input_batch})
+            f, axs = plt.subplots(1, 11, sharey=True, squeeze=True)
+            axs[0].matshow(input_batch[0].reshape(input_batch.shape[1] * 28, 28), cmap=plt.get_cmap('gray'))
+            axs[0].set_yticklabels(())
+            axs[0].set_xticklabels(())
+            plt.subplots_adjust(wspace=0.001)
+            axs[0].axis('off')
 
-            f, (ax1, ax2) = plt.subplots(1, 2, sharey=True, squeeze=True)
-            ax1.matshow(input_batch[0].reshape(input_batch.shape[1] * 28, 28), cmap=plt.get_cmap('Greys'))
-            ax2.matshow(img.reshape(input_batch.shape[1] * 28, 28), cmap=plt.get_cmap('Greys'))
-            plt.subplots_adjust(wspace=None, hspace=None)
+            for ax in axs[1:]:
+                img, gen_strength = sess.run([logits, strength], feed_dict={input_data: input_batch})
+                ax.matshow(img.reshape(input_batch.shape[1] * 28, 28), cmap=plt.get_cmap('Greys'))
+                ax.set_yticklabels(())
+                ax.set_xticklabels(())
+                ax.title.set_visible(False)
+                plt.subplots_adjust(wspace=0.001)
+                ax.axis('off')
             plt.show()
             plt.close()
 
