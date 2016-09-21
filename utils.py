@@ -7,9 +7,10 @@ class ResNet:
         conv1 = scg.Convolution2d(input_shape, kernel_size, num_filters, padding='SAME',
                                   fun='prelu', init=init)
         conv2 = scg.Convolution2d(input_shape, kernel_size, num_filters, padding='SAME', init=init)
+        f = scg.Nonlinearity(fun='prelu', input_shape=input_shape)
 
         def _apply(x):
-            return scg.nonlinearity(scg.add(x, conv2(input=conv1(input=x))), fun='prelu')
+            return f(input=scg.add(x, conv2(input=conv1(input=x))))
         return _apply
 
     @staticmethod
@@ -30,10 +31,12 @@ class ResNet:
             if not downscale:
                 pool = scg.ResizeImage(scale.shape, float(conv.shape[0]) / float(scale.shape[0]))
 
+        blocks = [ResNet.res_block(conv.shape, block_kernel, scale_filters, init=init) for l in xrange(num_blocks)]
+
         def _apply(x):
             h = conv(input=x)
             for layer in xrange(num_blocks):
-                h = ResNet.res_block(conv.shape, block_kernel, scale_filters, init=init)(h)
+                h = blocks[l](h)
             if shortcut:
                 h = scg.add(pool(input=scale(input=x)), h)
             return h

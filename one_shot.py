@@ -377,7 +377,7 @@ def grads_and_vars(vars_and_losses):
                 grads[var] += grad
     return [(grad, var) for var, grad in grads.iteritems()]
 
-opt_opt = tf.train.AdamOptimizer(beta2=0.99, epsilon=1e-4, learning_rate=learning_rate,
+opt_opt = tf.train.AdamOptimizer(beta2=0.99, epsilon=1e-8, learning_rate=learning_rate,
                                  use_locking=False).minimize(-vlb_gen, global_step)
 
 with tf.control_dependencies([opt_opt]):
@@ -484,7 +484,7 @@ with tf.Session() as sess:
             plt.show()
             plt.close()
         sys.exit()
-    elif args.generate:
+    elif args.generate is not None:
         assert args.generate <= episode_length
 
         time_step = args.generate
@@ -494,13 +494,14 @@ with tf.Session() as sess:
         # np.ones([batch_size, 1], dtype=np.float32) * 100.
 
         obs = vae.generate(time_step, num_object, False)
-        obs.backtrace(train_samples)
+        gen_samples = dict()
+        obs.backtrace(gen_samples, batch=episode_length)
 
         data = load_data(args.test_dataset)
         input_batch = np.zeros([batch_size, episode_length, data_dim])
 
-        logits = tf.sigmoid(train_samples[VAE.observed_name(time_step, num_object) + '_logit'])
-        strength = train_samples['gen_strength_%d_%d' % (time_step, num_object)]
+        logits = tf.sigmoid(gen_samples[VAE.observed_name(time_step, num_object) + '_logit'])
+        # strength = train_samples['gen_strength_%d_%d' % (time_step, num_object)]
 
         while True:
             put_new_data(data, input_batch)
@@ -515,7 +516,7 @@ with tf.Session() as sess:
             axs[0].axis('off')
 
             for ax in axs[1:]:
-                img, gen_strength = sess.run([logits, strength], feed_dict={input_data: input_batch})
+                img = sess.run(logits, feed_dict={input_data: input_batch})
                 ax.matshow(img.reshape(input_batch.shape[1] * 28, 28), cmap=plt.get_cmap('Greys'))
                 ax.set_yticklabels(())
                 ax.set_xticklabels(())

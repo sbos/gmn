@@ -2,6 +2,7 @@ import numpy as np
 import random
 import tensorflow as tf
 import string
+import inspect
 
 name_random = random.Random()
 name_random.seed(0)
@@ -32,7 +33,8 @@ class Node:
 
         for input_name, value in inputs.iteritems():
             # assert input_name not in input_values
-            if input_name in self.prototype.flow.func_code.co_varnames:
+            arg_names = self.prototype.flow.func_code.co_varnames[:self.prototype.flow.func_code.co_argcount]
+            if input_name in arg_names:
                 input_values[input_name] = value
 
         value = cache.get(self.name, None)

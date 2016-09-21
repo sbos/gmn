@@ -274,23 +274,24 @@ def batch_repeat(input, donor):
     return BatchRepeat()(input=input, batch=StealBatch()(input=donor))
 
 
-def nonlinearity(input, fun='prelu'):
-    args = {}
-    if fun == 'prelu':
-        args['p'] = tf.Variable(tf.random_uniform((input.shape[-1],), minval=-0.01, maxval=0.01))
+class Nonlinearity(NodePrototype):
+    def __init__(self, fun='prelu', input_shape=None):
+        NodePrototype.__init__(self)
 
-    class Nonlinearity(NodePrototype):
-        def __init__(self):
-            NodePrototype.__init__(self)
+        self.args = {}
+        self.fun = fun
+        self.input_shape = input_shape
+        if self.fun == 'prelu':
+            self.args['p'] = tf.Variable(tf.random_uniform((input_shape[-1],), minval=-0.01, maxval=0.01))
 
-        def flow(self, input=None):
-            assert input is not None
-            input = NodePrototype.reshape(input, self.shape)
-            output = dispatch_function(input, fun, **args)
-            return NodePrototype.flatten(output)
+    def flow(self, input=None):
+        assert input is not None
 
-        @property
-        def shape(self):
-            return input.shape
+        input = NodePrototype.reshape(input, self.shape)
+        output = dispatch_function(input, self.fun, **self.args)
+        return NodePrototype.flatten(output)
 
-    return Nonlinearity()(input=input)
+    @property
+    def shape(self):
+        return self.input_shape
+
