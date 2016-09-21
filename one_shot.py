@@ -4,6 +4,7 @@ import os
 import sys
 import time
 from threading import Thread
+from utils import ResNet
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -39,15 +40,11 @@ class GenerativeModel:
         self.pre_sigma = scg.Affine(200, self.hidden_dim, None, scg.he_normal)
         self.prior = scg.Normal(self.hidden_dim)
 
-        self.h1 = scg.Affine(hidden_dim, 2*2*32, fun=None, init=scg.he_normal)
-        self.conv1 = scg.Convolution2d([2, 2, 32], [2, 2], 32, padding='VALID', fun='prelu',
-                                       transpose=True, stride=2)
-        self.conv2 = scg.Convolution2d(self.conv1.shape, [2, 2], 32, padding='VALID', fun='prelu',
-                                       transpose=True, stride=2)
-        self.conv3 = scg.Convolution2d(self.conv2.shape, [2, 2], 16, padding='VALID', fun='prelu',
-                                       transpose=True, stride=2)
-        self.conv4 = scg.Convolution2d(self.conv3.shape, [2, 2], 1, padding='VALID',
-                                       transpose=True, stride=2)
+        self.h0 = scg.Affine(hidden_dim, 3*3*32, fun=None, init=scg.he_normal)
+        self.h1 = ResNet.section([3, 3, 32], [2, 2], 32, 2, [3, 3], downscale=False)
+        self.h2 = ResNet.section([6, 6, 32], [3, 3], 32, 2, [3, 3], downscale=False)
+        self.h3 = ResNet.section([13, 13, 32], [4, 4], 16, 2, [3, 3], downscale=False)
+        self.conv = scg.Convolution2d([28, 28, 16], [1, 1], 1, padding='VALID')
 
         self.strength = scg.Affine(state_dim, 1, init=scg.he_normal)
 
@@ -60,20 +57,24 @@ class GenerativeModel:
         return z
 
     def generate(self, z, param, observed_name):
-        h = self.h1(input=scg.concat([z]))
-        h = self.conv1(input=h)
-        h = self.conv2(input=h)
-        h = self.conv3(input=h)
-        h = self.conv4(input=h)
+        with tf.variable_scope(observed_name + '_h0'):
+            h = self.h0(input=scg.concat([z]))
+        with tf.variable_scope(observed_name + '_h1'):
+            h = self.h1(h)
+        with tf.variable_scope(observed_name + '_h2'):
+            h = self.h2(h)
+        with tf.variable_scope(observed_name + '_h3'):
+            h = self.h3(h)
 
-        def f(input=None):
-            batch = tf.shape(input)[0]
-            x = tf.reshape(input, tf.pack([batch, 32, 32]))
-            x = x[:, 2:, 2:]
-            x = x[:, :28, :28]
-            return scg.NodePrototype.flatten(x)
-
-        h = scg.apply(f, input=h, name=observed_name + '_logit')
+        # def f(input=None):
+        #     batch = tf.shape(input)[0]
+        #     x = tf.reshape(input, tf.pack([batch, 32, 32]))
+        #     x = x[:, 2:, 2:]
+        #     x = x[:, :28, :28]
+        #     return scg.NodePrototype.flatten(x)
+        #
+        # h = scg.apply(f, input=h, name=observed_name + '_logit')
+        h = self.conv(input=h, name=observed_name + '_logit')
         return scg.Bernoulli()(logit=h, name=observed_name)
 
 
@@ -84,55 +85,14 @@ class RecognitionModel:
 
         self.init = scg.norm_init(scg.he_normal)
 
-        self.h1 = RecognitionModel.section([28, 28, 1], [4, 4], 16, 2, [3, 3])
-        self.h2 = RecognitionModel.section([13, 13, 16], [3, 3], 32, 2, [3, 3])
-        self.h3 = RecognitionModel.section([6, 6, 32], [2, 2], 32, 2, [3, 3])
+        self.h1 = ResNet.section([28, 28, 1], [4, 4], 16, 2, [3, 3])
+        self.h2 = ResNet.section([13, 13, 16], [3, 3], 32, 2, [3, 3])
+        self.h3 = ResNet.section([6, 6, 32], [2, 2], 32, 2, [3, 3])
 
         self.mu = scg.Affine(np.prod([3, 3, 32]), hidden_dim)
         self.sigma = scg.Affine(np.prod([3, 3, 32]), hidden_dim)
 
         self.strength = scg.Affine(state_dim, 1, init=scg.he_normal)
-
-    @staticmethod
-    def res_block(input_shape, kernel_size, num_filters, init=scg.he_normal):
-        conv1 = scg.Convolution2d(input_shape, kernel_size, num_filters, padding='SAME',
-                                  fun='prelu', init=init)
-        conv2 = scg.Convolution2d(input_shape, kernel_size, num_filters, padding='SAME', init=init)
-
-        # args = {'p': tf.Variable(tf.random_uniform((num_filters,), minval=-0.01, maxval=0.01))}
-
-        def _apply(x):
-            # def super_f(input=None):
-            #     batch = tf.shape(input)[0]
-            #     input = tf.reshape(input, tf.pack([batch] + conv2.shape))
-
-            return scg.nonlinearity(scg.add(x, conv2(input=conv1(input=x))), fun='prelu')
-        return _apply
-
-    @staticmethod
-    def section(input_shape, downscale_kernel, downscale_filters, downscale_stride,
-                block_kernel, num_blocks=1, shortcut=True):
-        init = scg.norm_init(scg.he_normal)
-
-        conv = scg.Convolution2d(input_shape, downscale_kernel, downscale_filters,
-                                 downscale_stride, padding='VALID', fun='prelu', init=init)
-
-        if shortcut:
-            downscale = scg.Convolution2d(input_shape, [1, 1], downscale_filters,
-                                          padding='VALID', init=init)
-            pool = scg.Pooling(downscale.shape, downscale_kernel,
-                               [downscale_stride, downscale_stride])
-
-        def _apply(x):
-            h = conv(input=x)
-            for layer in xrange(num_blocks):
-                h = RecognitionModel.res_block(conv.shape, block_kernel, downscale_filters,
-                                               init=init)(h)
-            if shortcut:
-                h = scg.add(pool(input=downscale(input=x)), h)
-            return h
-
-        return _apply
 
     def get_features(self, obs):
         h = self.h1(obs)

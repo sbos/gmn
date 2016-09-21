@@ -116,3 +116,22 @@ class Pooling(NodePrototype):
         input = tf.reshape(input, tf.pack([batch] + self.input_shape))
         x = funs[self.fun](input, self.kernel_size, self.strides, self.padding)
         return NodePrototype.flatten(x)
+
+
+class ResizeImage(NodePrototype):
+    def __init__(self, input_shape, scale):
+        NodePrototype.__init__(self)
+        self.input_shape = input_shape
+        self.output_size = map(lambda x: int(round(x * scale)), input_shape[:2]) + [input_shape[-1]]
+        self.scale = scale
+
+    @property
+    def shape(self):
+        return self.output_size
+
+    def flow(self, input=None):
+        assert input is not None
+
+        input = NodePrototype.reshape(input, self.input_shape)
+        output = tf.image.resize_images(input, self.output_size[:2])
+        return NodePrototype.flatten(output)
