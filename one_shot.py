@@ -42,11 +42,11 @@ class GenerativeModel:
         self.h1 = scg.Affine(hidden_dim, 2*2*32, fun=None, init=scg.he_normal)
         self.conv1 = scg.Convolution2d([2, 2, 32], [2, 2], 32, padding='VALID', fun='prelu',
                                        transpose=True, stride=2)
-        self.conv2 = scg.Convolution2d(self.conv1.shape(), [2, 2], 32, padding='VALID', fun='prelu',
+        self.conv2 = scg.Convolution2d(self.conv1.shape, [2, 2], 32, padding='VALID', fun='prelu',
                                        transpose=True, stride=2)
-        self.conv3 = scg.Convolution2d(self.conv2.shape(), [2, 2], 16, padding='VALID', fun='prelu',
+        self.conv3 = scg.Convolution2d(self.conv2.shape, [2, 2], 16, padding='VALID', fun='prelu',
                                        transpose=True, stride=2)
-        self.conv4 = scg.Convolution2d(self.conv3.shape(), [2, 2], 1, padding='VALID',
+        self.conv4 = scg.Convolution2d(self.conv3.shape, [2, 2], 1, padding='VALID',
                                        transpose=True, stride=2)
 
         self.strength = scg.Affine(state_dim, 1, init=scg.he_normal)
@@ -82,27 +82,68 @@ class RecognitionModel:
         self.hidden_dim = hidden_dim
         self.param_dim = param_dim
 
-        self.h1 = scg.Convolution2d([28, 28, 1], [4, 4], 16, padding='VALID', fun='prelu')
-        self.h2 = scg.Convolution2d(self.h1.shape(), [3, 3], 16, padding='VALID', fun='prelu', stride=2)
-        self.h3 = scg.Convolution2d(self.h2.shape(), [3, 3], 32, padding='VALID', fun='prelu')
-        self.h4 = scg.Convolution2d(self.h3.shape(), [2, 2], 32, padding='VALID', fun='prelu', stride=2)
-        self.mu = scg.Affine(np.prod(self.h4.shape()), hidden_dim, init=scg.he_normal)
-        self.sigma = scg.Affine(np.prod(self.h4.shape()), hidden_dim, init=scg.he_normal)
+        self.init = scg.norm_init(scg.he_normal)
+
+        self.h1 = RecognitionModel.section([28, 28, 1], [4, 4], 16, 2, [3, 3])
+        self.h2 = RecognitionModel.section([13, 13, 16], [3, 3], 32, 2, [3, 3])
+        self.h3 = RecognitionModel.section([6, 6, 32], [2, 2], 32, 2, [3, 3])
+
+        self.mu = scg.Affine(np.prod([3, 3, 32]), hidden_dim)
+        self.sigma = scg.Affine(np.prod([3, 3, 32]), hidden_dim)
 
         self.strength = scg.Affine(state_dim, 1, init=scg.he_normal)
 
+    @staticmethod
+    def res_block(input_shape, kernel_size, num_filters, init=scg.he_normal):
+        conv1 = scg.Convolution2d(input_shape, kernel_size, num_filters, padding='SAME',
+                                  fun='prelu', init=init)
+        conv2 = scg.Convolution2d(input_shape, kernel_size, num_filters, padding='SAME', init=init)
+
+        # args = {'p': tf.Variable(tf.random_uniform((num_filters,), minval=-0.01, maxval=0.01))}
+
+        def _apply(x):
+            # def super_f(input=None):
+            #     batch = tf.shape(input)[0]
+            #     input = tf.reshape(input, tf.pack([batch] + conv2.shape))
+
+            return scg.nonlinearity(scg.add(x, conv2(input=conv1(input=x))), fun='prelu')
+        return _apply
+
+    @staticmethod
+    def section(input_shape, downscale_kernel, downscale_filters, downscale_stride,
+                block_kernel, num_blocks=1, shortcut=True):
+        init = scg.norm_init(scg.he_normal)
+
+        conv = scg.Convolution2d(input_shape, downscale_kernel, downscale_filters,
+                                 downscale_stride, padding='VALID', fun='prelu', init=init)
+
+        if shortcut:
+            downscale = scg.Convolution2d(input_shape, [1, 1], downscale_filters,
+                                          padding='VALID', init=init)
+            pool = scg.Pooling(downscale.shape, downscale_kernel,
+                               [downscale_stride, downscale_stride])
+
+        def _apply(x):
+            h = conv(input=x)
+            for layer in xrange(num_blocks):
+                h = RecognitionModel.res_block(conv.shape, block_kernel, downscale_filters,
+                                               init=init)(h)
+            if shortcut:
+                h = scg.add(pool(input=downscale(input=x)), h)
+            return h
+
+        return _apply
+
     def get_features(self, obs):
-        # h = scg.Padding([28, 28], [[2, 2], [2, 2]])(input=obs)
-        h = self.h1(input=obs)
-        h = self.h2(input=h)
-        h = self.h3(input=h)
-        h = self.h4(input=h)
+        h = self.h1(obs)
+        h = self.h2(h)
+        h = self.h3(h)
 
         return h
 
     @property
     def features_dim(self):
-        return np.prod(self.h4.shape())
+        return 3 * 3 * 32
 
     def recognize(self, obs, param, hidden_name):
         h = self.get_features(obs)
@@ -117,11 +158,11 @@ class ParamRecognition:
     def __init__(self, state_dim, hidden_dim, mem_dim=100):
         # source
         self.source_conv1 = scg.Convolution2d([28, 28, 1], [5, 5], 16, padding='VALID', fun='prelu')
-        self.source_conv2 = scg.Convolution2d(self.source_conv1.shape(), [5, 5], 16, padding='VALID',
+        self.source_conv2 = scg.Convolution2d(self.source_conv1.shape, [5, 5], 16, padding='VALID',
                                               fun='prelu')
-        self.source_conv3 = scg.Convolution2d(self.source_conv2.shape(), [2, 2], 16, padding='VALID',
+        self.source_conv3 = scg.Convolution2d(self.source_conv2.shape, [2, 2], 16, padding='VALID',
                                               fun='prelu', stride=2)
-        self.feature_dim = np.prod(self.source_conv3.shape())
+        self.feature_dim = np.prod(self.source_conv3.shape)
         self.param_dim = 100
         self.source_encoder = scg.Affine(self.feature_dim + state_dim, mem_dim,
                                          fun='prelu', init=scg.he_normal)
@@ -260,7 +301,7 @@ class VAE:
             self.obs[t] = [None] * episode_length
             for j in xrange(episode_length):
                 current_data = input_data[:, j, :]
-                self.obs[t][j] = scg.Constant(value=current_data)(name=VAE.observed_name(t, j))
+                self.obs[t][j] = scg.Constant(value=current_data, shape=[28*28])(name=VAE.observed_name(t, j))
 
         state = scg.BatchRepeat()(batch=scg.StealBatch()(input=self.obs[0][0]),
                                   input=self.init_state)

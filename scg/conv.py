@@ -25,15 +25,16 @@ class Convolution2d(NodePrototype):
             self.p = tf.Variable(tf.random_uniform((self.num_filters,), minval=-0.01, maxval=0.01))
 
         factor = np.prod(kernel_size)
-        if self.transpose:
-            self.bias = tf.zeros([self.output_shape[-1]])
-            self.filters = init(factor * num_filters, factor * self.input_shape[-1], fun,
-                                kernel_size + [num_filters, self.input_shape[-1]])
-        else:
-            self.bias = tf.zeros([num_filters])
-            self.filters = init(factor * self.input_shape[-1], factor * num_filters, fun,
-                                kernel_size + [self.input_shape[-1], num_filters])
 
+        if self.transpose:
+            kernel_shape = kernel_size + [num_filters, self.input_shape[-1]]
+        else:
+            kernel_shape = kernel_size + [self.input_shape[-1], num_filters]
+
+        self.filters = init(factor * self.input_shape[-1], factor * num_filters, fun, kernel_shape)
+        self.bias = tf.zeros([self.num_filters])
+
+    @property
     def shape(self):
         if self.transpose:
             if self.padding == 'SAME':
@@ -45,7 +46,9 @@ class Convolution2d(NodePrototype):
                   float(self.input_shape[1] - self.kernel_size[1]) / self.strides[2] + 1]
             return map(lambda x: int(np.ceil(x)), sh) + [self.num_filters]
         else:
-            return [self.input_shape[0], self.input_shape[1], self.num_filters]
+            sh = [float(self.input_shape[0]) / self.strides[1],
+                  float(self.input_shape[1]) / self.strides[2]]
+            return map(lambda x: int(np.ceil(x)), sh) + [self.num_filters]
 
     def flow(self, input=None):
         assert input is not None
@@ -87,14 +90,29 @@ class Pooling(NodePrototype):
     def __init__(self, input_shape, kernel_size, strides=[1, 1], padding='VALID', fun='avg'):
         NodePrototype.__init__(self)
         self.input_shape = input_shape
-        self.kernel_size = kernel_size
+        self.kernel_size = [1] + kernel_size + [1]
         self.strides = [1] + strides + [1]
         self.padding = padding
         self.fun = fun
 
+    @property
+    def shape(self):
+        if self.padding == 'VALID':
+            sh = [float(self.input_shape[0] - self.kernel_size[1]) / self.strides[1] + 1,
+                  float(self.input_shape[1] - self.kernel_size[2]) / self.strides[2] + 1]
+            return map(lambda x: int(np.ceil(x)), sh) + [self.input_shape[2]]
+        else:
+            sh = [float(self.input_shape[0]) / self.strides[1],
+                  float(self.input_shape[1]) / self.strides[2]]
+            return map(lambda x: int(np.ceil(x)), sh) + [self.input_shape[2]]
+
     def flow(self, input=None):
+        assert input is not None
         funs = {
             'avg': tf.nn.avg_pool,
             'max': tf.nn.max_pool
         }
-        return funs[self.fun](input, self.kernel_size, self.strides, self.padding)
+        batch = tf.shape(input)[0]
+        input = tf.reshape(input, tf.pack([batch] + self.input_shape))
+        x = funs[self.fun](input, self.kernel_size, self.strides, self.padding)
+        return NodePrototype.flatten(x)

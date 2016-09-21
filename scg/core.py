@@ -45,6 +45,10 @@ class Node:
 
         return cache
 
+    @property
+    def shape(self):
+        return self.prototype.shape
+
 
 class NodePrototype:
     def __init__(self):
@@ -71,9 +75,18 @@ class NodePrototype:
 
         return tf.reshape(output, tf.pack([batch, flat_shape]))
 
+    @staticmethod
+    def reshape(input, shape):
+        batch = tf.shape(input)[0]
+        return tf.reshape(input, tf.pack([batch] + shape))
+
     @property
     def variables(self):
         return []
+
+    @property
+    def shape(self):
+        raise NotImplementedError()
 
 
 class StochasticPrototype(NodePrototype):

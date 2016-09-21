@@ -42,6 +42,14 @@ def he_normal(input_size, output_size, fun=None, shape=None):
     return A
 
 
+def norm_init(init):
+    def _init(*args, **kwargs):
+        A = init(*args, **kwargs)
+        g = tf.Variable(1.)
+        return g * A / tf.sqrt(tf.reduce_sum(tf.square(A)))
+    return _init
+
+
 def prelu(x, p=0.):
     return tf.nn.relu(x) + p * tf.minimum(0., x)
 
@@ -94,6 +102,10 @@ class Affine(NodePrototype):
             args['p'] = p if p is not None else self.p
 
         return dispatch_function(y, self.fun, **args)
+
+    @property
+    def shape(self):
+        return [self.output_size]
 
     @property
     def variables(self):
@@ -159,13 +171,18 @@ def pack(*inputs):
 
 
 class Constant(NodePrototype):
-    def __init__(self, value):
+    def __init__(self, value, shape=None):
         NodePrototype.__init__(self)
         self.value = value
+        self._shape = shape
 
     def flow(self, **inputs):
         assert len(inputs) == 0
         return self.value
+
+    @property
+    def shape(self):
+        return self._shape
 
 
 class BatchRepeat(NodePrototype):
@@ -206,18 +223,23 @@ class Reshape(NodePrototype):
 
 
 class Add(NodePrototype):
-    def __init__(self, mul=1.):
+    def __init__(self, mul=1., input_shape=None):
         NodePrototype.__init__(self)
         self.mul = mul
+        self.input_shape = input_shape
 
     def flow(self, a=None, b=None):
         assert a is not None
         assert b is not None
         return a + b * self.mul
 
+    @property
+    def shape(self):
+        return self.input_shape
+
 
 def add(a, b, mul=1.):
-    return Add(mul=mul)(a=a, b=b)
+    return Add(mul=mul, input_shape=a.shape)(a=a, b=b)
 
 
 class Multiply(NodePrototype):
@@ -250,3 +272,25 @@ def by_key(input, key):
 
 def batch_repeat(input, donor):
     return BatchRepeat()(input=input, batch=StealBatch()(input=donor))
+
+
+def nonlinearity(input, fun='prelu'):
+    args = {}
+    if fun == 'prelu':
+        args['p'] = tf.Variable(tf.random_uniform((input.shape[-1],), minval=-0.01, maxval=0.01))
+
+    class Nonlinearity(NodePrototype):
+        def __init__(self):
+            NodePrototype.__init__(self)
+
+        def flow(self, input=None):
+            assert input is not None
+            input = NodePrototype.reshape(input, self.shape)
+            output = dispatch_function(input, fun, **args)
+            return NodePrototype.flatten(output)
+
+        @property
+        def shape(self):
+            return input.shape
+
+    return Nonlinearity()(input=input)
