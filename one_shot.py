@@ -139,14 +139,14 @@ class ParamRecognition:
         init = scg.he_normal  # scg.norm_init(scg.he_normal)
 
         self.param_dim = 200  # param_dim
-        self.source_encoder = scg.Affine(ParamRecognition.feature_dim + state_dim, mem_dim,
+        self.source_encoder = scg.Affine(ParamRecognition.feature_dim, mem_dim,
                                          fun='prelu', init=init)
 
         self.cell = scg.GRU(ParamRecognition.feature_dim, state_dim, fun='prelu', init=scg.he_normal)
 
-        self.query_encoder = scg.Affine(hidden_dim + state_dim, mem_dim,
+        self.query_encoder = scg.Affine(hidden_dim, mem_dim,
                                          fun='prelu', init=init)
-        self.param_encoder = scg.Affine(ParamRecognition.feature_dim + state_dim, self.param_dim,
+        self.param_encoder = scg.Affine(ParamRecognition.feature_dim, self.param_dim,
                                         fun='prelu', init=init)
         self.dummy_mem = scg.Constant(tf.Variable(tf.random_uniform([1, mem_dim],
                                                                     -1. / mem_dim,
@@ -171,11 +171,11 @@ class ParamRecognition:
 
     def encode_source(self, state, features):
         # features = ParamRecognition.get_features(obs)
-        return self.param_encoder(input=scg.concat([features, state])), \
-               self.source_encoder(input=scg.concat([features, state]))
+        return self.param_encoder(input=scg.concat([features])), \
+               self.source_encoder(input=scg.concat([features]))
 
     def encode_query(self, state, z):
-        return self.query_encoder(input=scg.concat([z, state]))
+        return self.query_encoder(input=scg.concat([z]))
         # return self.query_encoder(input=z)
 
     # returns parameters and features
