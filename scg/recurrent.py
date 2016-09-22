@@ -1,5 +1,5 @@
 from core import *
-from deterministic import dispatch_function, glorot_normal, Affine
+from deterministic import dispatch_function, glorot_normal, norm_init
 
 
 class RNN(NodePrototype):
@@ -36,12 +36,14 @@ class GRU(NodePrototype):
     def __init__(self, input_size, hidden_size, fun='tanh', init=glorot_normal):
         NodePrototype.__init__(self)
 
+        _init = norm_init(init)
+
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.fun = fun
 
         self.w_gates = init(input_size + hidden_size, 2 * hidden_size, 'sigmoid')
-        self.w_candidate = init(input_size + hidden_size, hidden_size, fun)
+        self.w_candidate = _init(input_size + hidden_size, hidden_size, fun)
 
         self.b_gates = tf.Variable(tf.zeros((hidden_size + hidden_size,)))
         self.b_candidate = tf.Variable(tf.zeros((hidden_size,)))

@@ -21,8 +21,8 @@ parser.add_argument('--max-classes', type=int, default=2)
 parser.add_argument('--test-episodes', type=int, default=1000)
 parser.add_argument('--reconstructions', action='store_const', const=True)
 parser.add_argument('--generate', type=int, default=None)
-parser.add_argument('--test-dataset', type=str, default='data/test_small_aug4.npz')
-parser.add_argument('--train-dataset', type=str, default='data/train_small_aug10.npz')
+parser.add_argument('--test-dataset', type=str, default='data/test_small.npz')
+parser.add_argument('--train-dataset', type=str, default='data/train_small.npz')
 parser.add_argument('--batch', type=int, default=20)
 args = parser.parse_args()
 
@@ -43,19 +43,27 @@ class GenerativeModel:
         # self.pre_conv = scg.Convolution2d([3, 3, 16], [1, 1], 32, padding='VALID')
 
         self.h0 = scg.Affine(hidden_dim + param_dim, 3*3*32, fun=None, init=scg.he_normal)
-        self.h1 = ResNet.section([3, 3, 32], [2, 2], 32, 2, [3, 3], downscale=False)
+        self.h1 = ResNet.section([3, 3, 32], [2, 2], 32, 2, [2, 2], downscale=False)
         self.h2 = ResNet.section([6, 6, 32], [3, 3], 32, 2, [3, 3], downscale=False)
         self.h3 = ResNet.section([13, 13, 32], [4, 4], 16, 2, [3, 3], downscale=False)
-        self.conv = scg.Convolution2d([28, 28, 16], [1, 1], 1, padding='VALID')
+        self.conv = scg.Convolution2d([28, 28, 16], [1, 1], 1, padding='VALID',
+                                      init=scg.he_normal)
+
+        # self.h1 = scg.Convolution2d([3, 3, 32], [2, 2], 32, padding='VALID', fun='prelu',
+        #                                transpose=True, stride=2)
+        # self.h2 = scg.Convolution2d(self.h1.shape, [4, 4], 32, padding='VALID', fun='prelu',
+        #                                transpose=True, stride=2)
+        # self.h3 = scg.Convolution2d(self.h2.shape, [2, 2], 1, padding='VALID',
+        #                                transpose=True, stride=2)
 
         self.strength = scg.Affine(state_dim, 1, init=scg.he_normal)
 
     def generate_prior(self, state, hidden_name):
-        # hp = self.hp(input=state)
-        # z = self.prior(name=hidden_name, mu=self.mu(input=hp),
-        #                pre_sigma=self.pre_sigma(input=hp))
+        hp = self.hp(input=state)
+        z = self.prior(name=hidden_name, mu=self.mu(input=hp),
+                       pre_sigma=self.pre_sigma(input=hp))
 
-        z = self.prior(name=hidden_name)
+        # z = self.prior(name=hidden_name)
         return z
 
     def generate(self, z, param, observed_name):
@@ -69,13 +77,25 @@ class GenerativeModel:
             h = self.h3(h)
 
         h = self.conv(input=h, name=observed_name + '_logit')
+
+        # h = self.h0(input=scg.concat([z, param]))
+        # h = self.h1(input=h)
+        # h = self.h2(input=h)
+        # h = self.h3(input=h, name=observed_name + '_logit')
+
         return scg.Bernoulli()(logit=h, name=observed_name)
 
 
 class RecognitionModel:
-    h1 = staticmethod(ResNet.section([28, 28, 1], [4, 4], 16, 2, [3, 3]))
-    h2 = staticmethod(ResNet.section([13, 13, 16], [3, 3], 32, 2, [3, 3]))
-    h3 = staticmethod(ResNet.section([6, 6, 32], [2, 2], 32, 2, [3, 3]))
+    # h1 = staticmethod(ResNet.section([28, 28, 1], [4, 4], 4, 2, [3, 3]))
+    # h2 = staticmethod(ResNet.section([13, 13, 4], [3, 3], 8, 2, [3, 3]))
+    # h3 = staticmethod(ResNet.section([6, 6, 8], [2, 2], 8, 2, [2, 2]))
+
+    h1 = scg.Convolution2d([28, 28, 1], [5, 5], 16, padding='VALID', fun='prelu')
+    h2 = scg.Convolution2d(h1.shape, [5, 5], 32, padding='VALID', fun='prelu')
+    h3 = scg.Convolution2d(h2.shape, [2, 2], 32, padding='VALID', fun='prelu', stride=2)
+
+    features_dim = np.prod(h3.shape)  # 3 * 3 * 8
 
     def __init__(self, hidden_dim, param_dim, state_dim):
         self.hidden_dim = hidden_dim
@@ -90,13 +110,11 @@ class RecognitionModel:
 
     @staticmethod
     def get_features(obs):
-        h = RecognitionModel.h1(obs)
-        h = RecognitionModel.h2(h)
-        h = RecognitionModel.h3(h)
+        h = RecognitionModel.h1(input=obs)
+        h = RecognitionModel.h2(input=h)
+        h = RecognitionModel.h3(input=h)
 
         return h
-
-    features_dim = 3 * 3 * 32
 
     def recognize(self, h, param, hidden_name):
         # h = RecognitionModel.get_features(obs)
@@ -108,22 +126,25 @@ class RecognitionModel:
 
 
 class ParamRecognition:
-    h1 = staticmethod(ResNet.section([28, 28, 1], [4, 4], 8, 2, [3, 3]))
-    h2 = staticmethod(ResNet.section([13, 13, 8], [3, 3], 16, 2, [3, 3]))
-    h3 = staticmethod(ResNet.section([6, 6, 16], [2, 2], 16, 2, [3, 3]))
+    # h1 = staticmethod(ResNet.section([28, 28, 1], [4, 4], 8, 2, [3, 3]))
+    # h2 = staticmethod(ResNet.section([13, 13, 8], [3, 3], 16, 2, [3, 3]))
+    # h3 = staticmethod(ResNet.section([6, 6, 16], [2, 2], 16, 2, [2, 2]))
 
-    feature_dim = 3 * 3 * 16
+    h1 = scg.Convolution2d([28, 28, 1], [5, 5], 32, padding='VALID', fun='prelu')
+    h2 = scg.Convolution2d(h1.shape, [4, 4], 16, padding='VALID', fun='prelu', stride=2)
 
-    def __init__(self, state_dim, hidden_dim, mem_dim=100, param_dim=100):
+    feature_dim = np.prod(h2.shape) # 3 * 3 * 16
+
+    def __init__(self, state_dim, hidden_dim, mem_dim=100):
         init = scg.he_normal  # scg.norm_init(scg.he_normal)
 
-        self.param_dim = ParamRecognition.feature_dim  # param_dim
-        self.source_encoder = scg.Affine(ParamRecognition.feature_dim, mem_dim,
+        self.param_dim = 200  # param_dim
+        self.source_encoder = scg.Affine(ParamRecognition.feature_dim + state_dim, mem_dim,
                                          fun='prelu', init=init)
 
         self.cell = scg.GRU(ParamRecognition.feature_dim, state_dim, fun='prelu', init=scg.he_normal)
 
-        self.query_encoder = scg.Affine(hidden_dim, mem_dim,
+        self.query_encoder = scg.Affine(hidden_dim + state_dim, mem_dim,
                                          fun='prelu', init=init)
         self.param_encoder = scg.Affine(ParamRecognition.feature_dim + state_dim, self.param_dim,
                                         fun='prelu', init=init)
@@ -132,27 +153,29 @@ class ParamRecognition:
                                                                     1. / mem_dim)))()
         self.dummy_param = scg.Constant(tf.Variable(tf.zeros([1, self.param_dim])))()
 
-    def update(self, state, obs):
-        state = self.cell(input=obs, state=state)
+    def update(self, state, features):
+        # features = ParamRecognition.get_features(obs)
+        state = self.cell(input=features, state=state)
         return state
 
     @staticmethod
     def get_features(obs):
-        h = ParamRecognition.h1(obs)
-        h = ParamRecognition.h2(h)
-        h = ParamRecognition.h3(h)
+        # h = ParamRecognition.h1(obs)
+        # h = ParamRecognition.h2(h)
+        # h = ParamRecognition.h3(h)
+
+        h = ParamRecognition.h1(input=obs)
+        h = ParamRecognition.h2(input=h)
 
         return h
 
     def encode_source(self, state, features):
         # features = ParamRecognition.get_features(obs)
-        # self.param_encoder(input=scg.concat([features, state])), \
-        return features, self.source_encoder(input=scg.concat([features]))
-        # return self.param_encoder(input=features), \
-        #     self.source_encoder(input=features)
+        return self.param_encoder(input=scg.concat([features, state])), \
+               self.source_encoder(input=scg.concat([features, state]))
 
     def encode_query(self, state, z):
-        return self.query_encoder(input=scg.concat([z]))
+        return self.query_encoder(input=scg.concat([z, state]))
         # return self.query_encoder(input=z)
 
     # returns parameters and features
@@ -238,8 +261,7 @@ class VAE:
             self.both_vars = [var for var in tf.all_variables() if var.name.startswith(vs.name)]
 
         with tf.variable_scope('recognition') as vs:
-            param_dim = 200
-            self.par = par(state_dim, hidden_dim, param_dim=param_dim)
+            self.par = par(state_dim, hidden_dim)
             self.rec = rec(hidden_dim, self.par.param_dim, state_dim)
 
             self.rec_vars = self.both_vars + [var for var in tf.all_variables() if var.name.startswith(vs.name)]
@@ -280,12 +302,13 @@ class VAE:
 
             resources = self.par.build_memory(state, self.param_features, timestep)
             self.mem.append(resources)
-            self.clear_mem.append(self.par.build_memory(state, self.param_features, timestep, False))
+            self.clear_mem.append(self.par.build_memory(state, self.param_features,
+                                                        timestep, False))
 
             for j in xrange(min(timestep+1, episode_length)):
                 param = self.par.query(resources,
-                                       # self.par.encode_source(state, self.obs[timestep][j])[1],
                                        self.par.encode_source(state, self.param_features[j])[1],
+                                       # self.par.encode_source(state, self.param_features[j])[1],
                                        self.rec.strength(input=state))
 
                 self.z[timestep].append(self.rec.recognize(self.features[j],
