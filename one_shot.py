@@ -40,6 +40,8 @@ class GenerativeModel:
         self.pre_sigma = scg.Affine(200, self.hidden_dim, None, scg.he_normal)
         self.prior = scg.Normal(self.hidden_dim)
 
+        # self.pre_conv = scg.Convolution2d([3, 3, 16], [1, 1], 32, padding='VALID')
+
         self.h0 = scg.Affine(hidden_dim + param_dim, 3*3*32, fun=None, init=scg.he_normal)
         self.h1 = ResNet.section([3, 3, 32], [2, 2], 32, 2, [3, 3], downscale=False)
         self.h2 = ResNet.section([6, 6, 32], [3, 3], 32, 2, [3, 3], downscale=False)
@@ -115,13 +117,13 @@ class ParamRecognition:
     def __init__(self, state_dim, hidden_dim, mem_dim=100, param_dim=100):
         init = scg.he_normal  # scg.norm_init(scg.he_normal)
 
-        self.param_dim = param_dim
-        self.source_encoder = scg.Affine(ParamRecognition.feature_dim + state_dim, mem_dim,
+        self.param_dim = ParamRecognition.feature_dim  # param_dim
+        self.source_encoder = scg.Affine(ParamRecognition.feature_dim, mem_dim,
                                          fun='prelu', init=init)
 
-        self.cell = scg.GRU(ParamRecognition.feature_dim, state_dim, fun='prelu', init=scg.norm_init(scg.he_normal))
+        self.cell = scg.GRU(ParamRecognition.feature_dim, state_dim, fun='prelu', init=scg.he_normal)
 
-        self.query_encoder = scg.Affine(hidden_dim + state_dim, mem_dim,
+        self.query_encoder = scg.Affine(hidden_dim, mem_dim,
                                          fun='prelu', init=init)
         self.param_encoder = scg.Affine(ParamRecognition.feature_dim + state_dim, self.param_dim,
                                         fun='prelu', init=init)
@@ -144,13 +146,13 @@ class ParamRecognition:
 
     def encode_source(self, state, features):
         # features = ParamRecognition.get_features(obs)
-        return self.param_encoder(input=scg.concat([features, state])), \
-            self.source_encoder(input=scg.concat([features, state]))
+        # self.param_encoder(input=scg.concat([features, state])), \
+        return features, self.source_encoder(input=scg.concat([features]))
         # return self.param_encoder(input=features), \
         #     self.source_encoder(input=features)
 
     def encode_query(self, state, z):
-        return self.query_encoder(input=scg.concat([z, state]))
+        return self.query_encoder(input=scg.concat([z]))
         # return self.query_encoder(input=z)
 
     # returns parameters and features
@@ -237,8 +239,8 @@ class VAE:
 
         with tf.variable_scope('recognition') as vs:
             param_dim = 200
-            self.rec = rec(hidden_dim, param_dim, state_dim)
             self.par = par(state_dim, hidden_dim, param_dim=param_dim)
+            self.rec = rec(hidden_dim, self.par.param_dim, state_dim)
 
             self.rec_vars = self.both_vars + [var for var in tf.all_variables() if var.name.startswith(vs.name)]
 
