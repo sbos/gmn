@@ -24,7 +24,10 @@ parser.add_argument('--generate', type=int, default=None)
 parser.add_argument('--test-dataset', type=str, default='data/test_small.npz')
 parser.add_argument('--train-dataset', type=str, default='data/train_small.npz')
 parser.add_argument('--batch', type=int, default=20)
+parser.add_argument('--seed', type=int, default=123)
 args = parser.parse_args()
+
+tf.set_random_seed(args.seed)
 
 data_dim = 28*28
 episode_length = args.episode
@@ -43,18 +46,18 @@ class GenerativeModel:
         # self.pre_conv = scg.Convolution2d([3, 3, 16], [1, 1], 32, padding='VALID')
 
         self.h0 = scg.Affine(hidden_dim + param_dim, 3*3*32, fun=None, init=scg.he_normal)
-        self.h1 = ResNet.section([3, 3, 32], [2, 2], 32, 2, [2, 2], downscale=False)
-        self.h2 = ResNet.section([6, 6, 32], [3, 3], 32, 2, [3, 3], downscale=False)
-        self.h3 = ResNet.section([13, 13, 32], [4, 4], 16, 2, [3, 3], downscale=False)
-        self.conv = scg.Convolution2d([28, 28, 16], [1, 1], 1, padding='VALID',
-                                      init=scg.he_normal)
+        # self.h1 = ResNet.section([3, 3, 32], [2, 2], 32, 2, [2, 2], downscale=False)
+        # self.h2 = ResNet.section([6, 6, 32], [3, 3], 16, 2, [3, 3], downscale=False)
+        # self.h3 = ResNet.section([13, 13, 16], [4, 4], 8, 2, [3, 3], downscale=False)
+        # self.conv = scg.Convolution2d([28, 28, 8], [1, 1], 1, padding='VALID',
+        #                               init=scg.he_normal)
 
-        # self.h1 = scg.Convolution2d([3, 3, 32], [2, 2], 32, padding='VALID', fun='prelu',
-        #                                transpose=True, stride=2)
-        # self.h2 = scg.Convolution2d(self.h1.shape, [4, 4], 32, padding='VALID', fun='prelu',
-        #                                transpose=True, stride=2)
-        # self.h3 = scg.Convolution2d(self.h2.shape, [2, 2], 1, padding='VALID',
-        #                                transpose=True, stride=2)
+        self.h1 = scg.Convolution2d([3, 3, 32], [2, 2], 32, padding='VALID', fun='prelu',
+                                       transpose=True, stride=2)
+        self.h2 = scg.Convolution2d(self.h1.shape, [4, 4], 32, padding='VALID', fun='prelu',
+                                       transpose=True, stride=2)
+        self.h3 = scg.Convolution2d(self.h2.shape, [2, 2], 1, padding='VALID',
+                                       transpose=True, stride=2)
 
         self.strength = scg.Affine(state_dim, 1, init=scg.he_normal)
 
@@ -67,35 +70,39 @@ class GenerativeModel:
         return z
 
     def generate(self, z, param, observed_name):
-        with tf.variable_scope(observed_name + '_h0'):
-            h = self.h0(input=scg.concat([z, param]))
-        with tf.variable_scope(observed_name + '_h1'):
-            h = self.h1(h)
-        with tf.variable_scope(observed_name + '_h2'):
-            h = self.h2(h)
-        with tf.variable_scope(observed_name + '_h3'):
-            h = self.h3(h)
+        # with tf.variable_scope(observed_name + '_h0'):
+        #     h = self.h0(input=scg.concat([z, param]))
+        # with tf.variable_scope(observed_name + '_h1'):
+        #     h = self.h1(h)
+        # with tf.variable_scope(observed_name + '_h2'):
+        #     h = self.h2(h)
+        # with tf.variable_scope(observed_name + '_h3'):
+        #     h = self.h3(h)
+        #
+        # h = self.conv(input=h, name=observed_name + '_logit')
 
-        h = self.conv(input=h, name=observed_name + '_logit')
-
-        # h = self.h0(input=scg.concat([z, param]))
-        # h = self.h1(input=h)
-        # h = self.h2(input=h)
-        # h = self.h3(input=h, name=observed_name + '_logit')
+        h = self.h0(input=scg.concat([z, param]))
+        h = self.h1(input=h)
+        h = self.h2(input=h)
+        h = self.h3(input=h, name=observed_name + '_logit')
 
         return scg.Bernoulli()(logit=h, name=observed_name)
 
 
 class RecognitionModel:
-    # h1 = staticmethod(ResNet.section([28, 28, 1], [4, 4], 4, 2, [3, 3]))
-    # h2 = staticmethod(ResNet.section([13, 13, 4], [3, 3], 8, 2, [3, 3]))
-    # h3 = staticmethod(ResNet.section([6, 6, 8], [2, 2], 8, 2, [2, 2]))
+    # h1 = staticmethod(ResNet.section([28, 28, 1], [4, 4], 16, 2, [3, 3]))
+    # h2 = staticmethod(ResNet.section([13, 13, 16], [3, 3], 32, 2, [3, 3]))
+    # h3 = staticmethod(ResNet.section([6, 6, 32], [2, 2], 32, 2, [2, 2]))
 
     h1 = scg.Convolution2d([28, 28, 1], [5, 5], 16, padding='VALID', fun='prelu')
     h2 = scg.Convolution2d(h1.shape, [5, 5], 32, padding='VALID', fun='prelu')
     h3 = scg.Convolution2d(h2.shape, [2, 2], 32, padding='VALID', fun='prelu', stride=2)
 
-    features_dim = np.prod(h3.shape)  # 3 * 3 * 8
+    # h1 = staticmethod(ResNet.section([28, 28, 1], [5, 5], 16, 1, [5, 5]))
+    # h2 = staticmethod(ResNet.section([24, 24, 16], [5, 5], 32, 1, [5, 5]))
+    # h3 = staticmethod(ResNet.section([20, 20, 32], [2, 2], 32, 2, [2, 2]))
+
+    features_dim = np.prod(h3.shape) # 3 * 3 * 32
 
     def __init__(self, hidden_dim, param_dim, state_dim):
         self.hidden_dim = hidden_dim
@@ -110,6 +117,10 @@ class RecognitionModel:
 
     @staticmethod
     def get_features(obs):
+        # h = RecognitionModel.h1(obs)
+        # h = RecognitionModel.h2(h)
+        # h = RecognitionModel.h3(h)
+
         h = RecognitionModel.h1(input=obs)
         h = RecognitionModel.h2(input=h)
         h = RecognitionModel.h3(input=h)
@@ -166,8 +177,9 @@ class ParamRecognition:
 
         h = ParamRecognition.h1(input=obs)
         h = ParamRecognition.h2(input=h)
-
         return h
+
+        # return RecognitionModel.get_features(obs)
 
     def encode_source(self, state, features):
         # features = ParamRecognition.get_features(obs)
@@ -374,7 +386,8 @@ batch_size = args.batch if args.test is None else args.test
 input_data = data_queue.dequeue_many(batch_size)
 binarized = tf.cast(tf.less_equal(tf.random_uniform(tf.shape(input_data)), input_data), tf.float32)
 
-vae = VAE(binarized, args.hidden_dim, GenerativeModel, RecognitionModel, ParamRecognition)
+with tf.variable_scope('model'):
+    vae = VAE(binarized, args.hidden_dim, GenerativeModel, RecognitionModel, ParamRecognition)
 train_samples = vae.sample(None)
 weights = vae.importance_weights(train_samples)
 
@@ -406,10 +419,16 @@ def grads_and_vars(vars_and_losses):
                 grads[var] += grad
     return [(grad, var) for var, grad in grads.iteritems()]
 
-opt_opt = tf.train.AdamOptimizer(beta2=0.99, epsilon=1e-8, learning_rate=learning_rate,
-                                 use_locking=False).minimize(-vlb_gen, global_step)
+reg = 0.
+for var in tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='model'):
+    reg += tf.reduce_sum(tf.square(var))
 
-with tf.control_dependencies([opt_opt]):
+train_objective = -vlb_gen # + 1e-5 * reg
+
+opt_op = tf.train.AdamOptimizer(beta2=0.99, epsilon=1e-8, learning_rate=learning_rate,
+                                use_locking=False).minimize(train_objective, global_step)
+
+with tf.control_dependencies([opt_op]):
     train_op = tf.group(avg_op)
 
 avg_vlb = ema.average(vlb_gen)
@@ -523,13 +542,16 @@ with tf.Session() as sess:
         # np.ones([batch_size, 1], dtype=np.float32) * 100.
 
         obs = vae.generate(time_step, num_object, False)
-        gen_samples = dict()
-        obs.backtrace(gen_samples, batch=episode_length)
+        if VAE.hidden_name(time_step, num_object) in train_samples:
+            del train_samples[VAE.hidden_name(time_step, num_object)]
+        if VAE.observed_name(time_step, num_object) in train_samples:
+            del train_samples[VAE.observed_name(time_step, num_object)]
+        obs.backtrace(train_samples, batch=episode_length)
 
         data = load_data(args.test_dataset)
         input_batch = np.zeros([batch_size, episode_length, data_dim])
 
-        logits = tf.sigmoid(gen_samples[VAE.observed_name(time_step, num_object) + '_logit'])
+        logits = tf.sigmoid(train_samples[VAE.observed_name(time_step, num_object) + '_logit'])
         # strength = train_samples['gen_strength_%d_%d' % (time_step, num_object)]
 
         while True:
@@ -573,6 +595,7 @@ with tf.Session() as sess:
                 for t in xrange(episode_length):
                     msg += ' %.2f' % pred_lb[t]
                 sys.stdout.write(msg)
+                sys.stdout.flush()
                 if batch == total_batches-1:
                     print
                     log.info(msg)

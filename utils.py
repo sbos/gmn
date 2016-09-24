@@ -4,13 +4,15 @@ import scg
 class ResNet:
     @staticmethod
     def res_block(input_shape, kernel_size, num_filters, init=scg.he_normal, lastfun=True):
-        conv1 = scg.Convolution2d(input_shape, kernel_size, num_filters, padding='SAME',
-                                  fun='prelu', init=init)
+        # conv1 = scg.Convolution2d(input_shape, kernel_size, num_filters, padding='SAME',
+        #                           fun='prelu', init=init)
         conv2 = scg.Convolution2d(input_shape, kernel_size, num_filters, padding='SAME', init=init)
         f = scg.Nonlinearity(fun='prelu' if lastfun else None, input_shape=input_shape)
 
         def _apply(x):
-            return f(input=scg.add(x, conv2(input=conv1(input=x))))
+            y = x
+            # y = conv1(input=x)
+            return f(input=scg.add(x, conv2(input=y)))
         return _apply
 
     @staticmethod
