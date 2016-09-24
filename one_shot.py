@@ -127,8 +127,8 @@ class RecognitionModel:
 
         return h
 
-    def recognize(self, h, param, hidden_name):
-        # h = RecognitionModel.get_features(obs)
+    def recognize(self, obs, param, hidden_name):
+        h = RecognitionModel.get_features(obs)
         h = scg.concat([h, param])
         mu = self.mu(input=h, name=hidden_name + '_mu')
         sigma = self.sigma(input=h, name=hidden_name + '_sigma')
@@ -164,8 +164,8 @@ class ParamRecognition:
                                                                     1. / mem_dim)))()
         self.dummy_param = scg.Constant(tf.Variable(tf.zeros([1, self.param_dim])))()
 
-    def update(self, state, features):
-        # features = ParamRecognition.get_features(obs)
+    def update(self, state, obs):
+        features = ParamRecognition.get_features(obs)
         state = self.cell(input=features, state=state)
         return state
 
@@ -181,8 +181,8 @@ class ParamRecognition:
 
         # return RecognitionModel.get_features(obs)
 
-    def encode_source(self, state, features):
-        # features = ParamRecognition.get_features(obs)
+    def encode_source(self, state, obs):
+        features = ParamRecognition.get_features(obs)
         return self.param_encoder(input=scg.concat([features])), \
                self.source_encoder(input=scg.concat([features]))
 
@@ -296,11 +296,11 @@ class VAE:
                 self.obs[t][j] = scg.Constant(value=current_data, shape=[28*28])(name=VAE.observed_name(t, j))
 
         # pre-computing features
-        self.features = []
-        self.param_features = []
-        for j in xrange(episode_length):
-            self.features.append(RecognitionModel.get_features(self.obs[j][j]))
-            self.param_features.append(ParamRecognition.get_features(self.obs[j][j]))
+        # self.features = []
+        # self.param_features = []
+        # for j in xrange(episode_length):
+        #     self.features.append(RecognitionModel.get_features(self.obs[j][j]))
+        #     self.param_features.append(ParamRecognition.get_features(self.obs[j][j]))
 
         state = scg.BatchRepeat()(batch=scg.StealBatch()(input=self.obs[0][0]),
                                   input=self.init_state)
@@ -312,25 +312,25 @@ class VAE:
             self.x.append([])
             self.states.append(state)
 
-            resources = self.par.build_memory(state, self.param_features, timestep)
+            resources = self.par.build_memory(state, self.obs[timestep], timestep)
             self.mem.append(resources)
-            self.clear_mem.append(self.par.build_memory(state, self.param_features,
+            self.clear_mem.append(self.par.build_memory(state, self.obs[timestep],
                                                         timestep, False))
 
             for j in xrange(min(timestep+1, episode_length)):
                 param = self.par.query(resources,
-                                       self.par.encode_source(state, self.param_features[j])[1],
+                                       self.par.encode_source(state, self.obs[timestep][j])[1],
                                        # self.par.encode_source(state, self.param_features[j])[1],
                                        self.rec.strength(input=state))
 
-                self.z[timestep].append(self.rec.recognize(self.features[j],
+                self.z[timestep].append(self.rec.recognize(self.obs[timestep][j],
                                                            param,
                                                            VAE.hidden_name(timestep, j)))
 
                 self.x[timestep].append(self.generate(timestep, j))
 
             if self.par is not None and timestep < episode_length:
-                state = self.par.update(state, self.param_features[timestep])
+                state = self.par.update(state, self.obs[timestep][timestep])
 
     def generate(self, timestep, j, dummy=True):
         state = self.states[timestep]
