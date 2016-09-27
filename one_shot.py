@@ -25,6 +25,8 @@ parser.add_argument('--test-dataset', type=str, default='data/test_small.npz')
 parser.add_argument('--train-dataset', type=str, default='data/train_small.npz')
 parser.add_argument('--batch', type=int, default=20)
 parser.add_argument('--seed', type=int, default=123)
+parser.add_argument('--l2', type=float, default=0.)
+
 args = parser.parse_args()
 
 tf.set_random_seed(args.seed)
@@ -43,21 +45,12 @@ class GenerativeModel:
         self.pre_sigma = scg.Affine(200, self.hidden_dim, None, scg.he_normal)
         self.prior = scg.Normal(self.hidden_dim)
 
-        # self.pre_conv = scg.Convolution2d([3, 3, 16], [1, 1], 32, padding='VALID')
-
         self.h0 = scg.Affine(hidden_dim + param_dim, 3*3*32, fun=None, init=scg.he_normal)
         self.h1 = ResNet.section([3, 3, 32], [2, 2], 32, 2, [2, 2], downscale=False)
         self.h2 = ResNet.section([6, 6, 32], [3, 3], 16, 2, [3, 3], downscale=False)
         self.h3 = ResNet.section([13, 13, 16], [4, 4], 8, 2, [3, 3], downscale=False)
         self.conv = scg.Convolution2d([28, 28, 8], [1, 1], 1, padding='VALID',
                                       init=scg.he_normal)
-
-        # self.h1 = scg.Convolution2d([3, 3, 32], [2, 2], 32, padding='VALID', fun='prelu',
-        #                                transpose=True, stride=2)
-        # self.h2 = scg.Convolution2d(self.h1.shape, [4, 4], 32, padding='VALID', fun='prelu',
-        #                                transpose=True, stride=2)
-        # self.h3 = scg.Convolution2d(self.h2.shape, [2, 2], 1, padding='VALID',
-        #                                transpose=True, stride=2)
 
         self.strength = scg.Affine(state_dim, 1, init=scg.he_normal)
 
@@ -66,7 +59,6 @@ class GenerativeModel:
         z = self.prior(name=hidden_name, mu=self.mu(input=hp),
                        pre_sigma=self.pre_sigma(input=hp))
 
-        # z = self.prior(name=hidden_name)
         return z
 
     def generate(self, z, param, observed_name):
@@ -81,25 +73,10 @@ class GenerativeModel:
 
         h = self.conv(input=h, name=observed_name + '_logit')
 
-        # h = self.h0(input=scg.concat([z, param]))
-        # h = self.h1(input=h)
-        # h = self.h2(input=h)
-        # h = self.h3(input=h, name=observed_name + '_logit')
-
         return scg.Bernoulli()(logit=h, name=observed_name)
 
 
 class RecognitionModel:
-    # h1 = staticmethod(ResNet.section([28, 28, 1], [4, 4], 16, 2, [3, 3]))
-    # h2 = staticmethod(ResNet.section([13, 13, 16], [3, 3], 32, 2, [3, 3]))
-    # h3 = staticmethod(ResNet.section([6, 6, 32], [2, 2], 32, 2, [2, 2]))
-
-    # h1 = staticmethod(ResNet.section([28, 28, 1], [5, 5], 16, 1, [5, 5]))
-    # h2 = staticmethod(ResNet.section([24, 24, 16], [5, 5], 32, 1, [5, 5]))
-    # h3 = staticmethod(ResNet.section([20, 20, 32], [2, 2], 32, 2, [2, 2]))
-
-    # 3 * 3 * 32
-
     def __init__(self, hidden_dim, param_dim, state_dim):
         self.hidden_dim = hidden_dim
         self.param_dim = param_dim
@@ -110,10 +87,6 @@ class RecognitionModel:
         self.h2 = ResNet.section([13, 13, 16], [3, 3], 32, 2, [3, 3])
         self.h3 = ResNet.section([6, 6, 32], [2, 2], 32, 2, [2, 2])
 
-        # self.h1 = scg.Convolution2d([28, 28, 1], [5, 5], 16, padding='VALID', fun='prelu')
-        # self.h2 = scg.Convolution2d(self.h1.shape, [5, 5], 32, padding='VALID', fun='prelu')
-        # self.h3 = scg.Convolution2d(self.h2.shape, [2, 2], 32, padding='VALID', fun='prelu', stride=2)
-
         self.features_dim = 3 * 3 * 32 # np.prod(self.h3.shape)
 
         self.mu = scg.Affine(self.features_dim + param_dim, hidden_dim)
@@ -122,10 +95,6 @@ class RecognitionModel:
         self.strength = scg.Affine(state_dim, 1, init=scg.he_normal)
 
     def get_features(self, obs):
-        # h = RecognitionModel.h1(obs)
-        # h = RecognitionModel.h2(h)
-        # h = RecognitionModel.h3(h)
-
         h = self.h1(obs)
         h = self.h2(h)
         h = self.h3(h)
@@ -142,19 +111,12 @@ class RecognitionModel:
 
 
 class ParamRecognition:
-    # h1 = staticmethod(ResNet.section([28, 28, 1], [4, 4], 8, 2, [3, 3]))
-    # h2 = staticmethod(ResNet.section([13, 13, 8], [3, 3], 16, 2, [3, 3]))
-    # h3 = staticmethod(ResNet.section([6, 6, 16], [2, 2], 16, 2, [2, 2]))
-
     def __init__(self, state_dim, hidden_dim, mem_dim=100):
-        init = scg.he_normal  # scg.norm_init(scg.he_normal)
+        init = scg.he_normal
 
-        self.h1 = scg.Convolution2d([28, 28, 1], [5, 5], 32, padding='VALID', fun='prelu')
-        self.h2 = scg.Convolution2d(self.h1.shape, [4, 4], 16, padding='VALID', fun='prelu', stride=2)
+        self.feature_dim = 3 * 3 * 32
 
-        self.feature_dim = 3 * 3 * 32  # np.prod(self.h2.shape) # 3 * 3 * 16
-
-        self.param_dim = 200  # param_dim
+        self.param_dim = 200
         self.source_encoder = scg.Affine(self.feature_dim, mem_dim,
                                          fun='prelu', init=init)
 
@@ -173,17 +135,6 @@ class ParamRecognition:
         # features = self.get_features(obs)
         state = self.cell(input=features, state=state)
         return state
-
-    def get_features(self, obs):
-        # h = ParamRecognition.h1(obs)
-        # h = ParamRecognition.h2(h)
-        # h = ParamRecognition.h3(h)
-
-        h = self.h1(input=obs)
-        h = self.h2(input=h)
-        return h
-
-        # return RecognitionModel.get_features(obs)
 
     def encode_source(self, state, features):
         # features = self.get_features(obs)
@@ -228,42 +179,32 @@ class ParamRecognition:
 
 
 def lower_bound(w):
-    vlb_gen = 0.
-
-    for i in xrange(episode_length):
-        vlb_gen += tf.reduce_mean(w[i, i, :])
-
-    return vlb_gen
+    return tf.reduce_sum(tf.reduce_mean(w, 1))
 
 
 def predictive_lb(w):
-    ll = [0.] * episode_length
-
-    for i in xrange(len(ll)):
-        ll[i] += tf.reduce_mean(w[i, i, :])
-
-    return tf.pack(ll)
+    return tf.reduce_mean(w, 1)
 
 
 def predictive_ll(w):
     ll = [0.] * episode_length
+    max_w = tf.reduce_max(w, 1)
 
     for i in xrange(len(ll)):
-        max_w = tf.reduce_max(w[i, i, :])
-        adjusted_w = w[i, i, :] - max_w
-        ll[i] += tf.log(tf.reduce_mean(tf.exp(adjusted_w))) + max_w
+        adjusted_w = w[i, :] - max_w[i]
+        ll[i] += tf.log(tf.reduce_mean(tf.exp(adjusted_w))) + max_w[i]
 
     return tf.pack(ll)
 
 
 class VAE:
     @staticmethod
-    def hidden_name(step, j):
-        return 'z_' + str(step) + '_' + str(j)
+    def hidden_name(step):
+        return 'z_' + str(step)
 
     @staticmethod
-    def observed_name(step, j):
-        return 'x_' + str(step) + '_' + str(j)
+    def observed_name(step):
+        return 'x_' + str(step)
 
     @staticmethod
     def params_name(step):
@@ -287,33 +228,28 @@ class VAE:
 
             self.gen_vars = self.both_vars + [var for var in tf.all_variables() if var.name.startswith(vs.name)]
 
-        self.z = []
-        self.x = []
+        self.z = [None] * episode_length
+        self.x = [None] * (episode_length+1)
 
         # allocating observations
 
-        self.obs = [None] * (episode_length+1)
-        for t in xrange(episode_length+1):
-            self.obs[t] = [None] * episode_length
-            for j in xrange(episode_length):
-                current_data = input_data[:, j, :]
-                self.obs[t][j] = scg.Constant(value=current_data, shape=[28*28])(name=VAE.observed_name(t, j))
+        self.obs = [None] * episode_length
+        for t in xrange(episode_length):
+            current_data = input_data[:, t, :]
+            self.obs[t] = scg.Constant(value=current_data, shape=[28*28])(name=VAE.observed_name(t))
 
         # pre-computing features
         self.features = []
-        self.param_features = []
-        for j in xrange(episode_length):
-            self.features.append(self.rec.get_features(self.obs[j][j]))
-            # self.param_features.append(self.par.get_features(self.obs[j][j]))
+        for t in xrange(episode_length):
+            self.features.append(self.rec.get_features(self.obs[t]))
 
-        state = scg.BatchRepeat()(batch=scg.StealBatch()(input=self.obs[0][0]),
+        state = scg.BatchRepeat()(batch=scg.StealBatch()(input=self.obs[0]),
                                   input=self.init_state)
         self.states = []
         self.mem = []
         self.clear_mem = []
+
         for timestep in xrange(episode_length+1):
-            self.z.append([])
-            self.x.append([])
             self.states.append(state)
 
             resources = self.par.build_memory(state, self.features, timestep)
@@ -321,39 +257,36 @@ class VAE:
             self.clear_mem.append(self.par.build_memory(state, self.features,
                                                         timestep, False))
 
-            for j in xrange(min(timestep+1, episode_length)):
+            if timestep < episode_length:
                 param = self.par.query(resources,
-                                       self.par.encode_source(state, self.features[j])[1],
-                                       # self.par.encode_source(state, self.param_features[j])[1],
+                                       self.par.encode_source(state, self.features[timestep])[1],
                                        self.rec.strength(input=state))
 
-                self.z[timestep].append(self.rec.recognize(self.features[j],
-                                                           param,
-                                                           VAE.hidden_name(timestep, j)))
+                self.z[timestep] = self.rec.recognize(self.features[timestep], param,
+                                                      VAE.hidden_name(timestep))
 
-                self.x[timestep].append(self.generate(timestep, j))
+            self.x[timestep] = self.generate(timestep)
 
-            if self.par is not None and timestep < episode_length:
+            if timestep < episode_length:
                 state = self.par.update(state, self.features[timestep])
 
-    def generate(self, timestep, j, dummy=True):
+    def generate(self, timestep, dummy=True):
         state = self.states[timestep]
         mem = self.mem
         if not dummy:
             mem = self.clear_mem
         resources = mem[timestep]
 
-        z_prior = self.gen.generate_prior(state, VAE.hidden_name(timestep, j))
+        z_prior = self.gen.generate_prior(state, VAE.hidden_name(timestep))
         param = self.par.query(resources,
                                self.par.encode_query(state, z_prior),
-                               self.gen.strength(input=state, name='gen_strength_%d_%d' % (timestep, j)))
-        return self.gen.generate(z_prior, param, VAE.observed_name(timestep, j))
+                               self.gen.strength(input=state, name='gen_strength_%d' % timestep))
+        return self.gen.generate(z_prior, param, VAE.observed_name(timestep))
 
     def sample(self, cache=None):
-        for i in xrange(episode_length+1):
-            for j in xrange(min(episode_length, i+1)):
-                cache = self.z[i][j].backtrace(cache)
-                cache = self.x[i][j].backtrace(cache)
+        for i in xrange(episode_length):
+            cache = self.z[i].backtrace(cache)
+            cache = self.x[i].backtrace(cache)
         return cache
 
     def importance_weights(self, cache):
@@ -361,21 +294,13 @@ class VAE:
         rec_ll = {}
 
         # w[t][i] -- likelihood ratio for the i-th object after t objects has been seen
-        w = [0.] * (episode_length+1)
+        w = [0.] * episode_length
 
-        for i in xrange(episode_length+1):
-            for j in xrange(0, min(i+1, episode_length)):
-                scg.likelihood(self.z[i][j], cache, rec_ll)
-                scg.likelihood(self.x[i][j], cache, gen_ll)
+        for i in xrange(episode_length):
+            scg.likelihood(self.z[i], cache, rec_ll)
+            scg.likelihood(self.x[i], cache, gen_ll)
 
-            w[i] = [None] * episode_length
-
-            for j in xrange(min(i+1, episode_length)):
-                local_ll = gen_ll[VAE.observed_name(i, j)] + gen_ll[VAE.hidden_name(i, j)] \
-                           - rec_ll[VAE.hidden_name(i, j)]
-                w[i][j] = local_ll
-            for j in xrange(i+1, episode_length):
-                w[i][j] = tf.zeros(tf.shape(w[i][0]))
+            w[i] = gen_ll[VAE.observed_name(i)] + gen_ll[VAE.hidden_name(i)] - rec_ll[VAE.hidden_name(i)]
 
         w = tf.pack(w)
 
@@ -427,7 +352,7 @@ reg = 0.
 for var in tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='model'):
     reg += tf.reduce_sum(tf.square(var))
 
-train_objective = -vlb_gen + 1e-5 * reg
+train_objective = -vlb_gen + args.l2 * reg
 
 opt_op = tf.train.AdamOptimizer(beta2=0.99, epsilon=1e-8, learning_rate=learning_rate,
                                 use_locking=False).minimize(train_objective, global_step)
@@ -437,12 +362,6 @@ with tf.control_dependencies([opt_op]):
 
 avg_vlb = ema.average(vlb_gen)
 avg_pred_lb = ema.average(train_pred_lb)
-
-reconstructions = [None] * episode_length
-for i in xrange(episode_length):
-    reconstructions[i] = tf.sigmoid(train_samples[VAE.observed_name(i, i) + '_logit'][0, :])
-reconstructions = tf.pack(reconstructions)
-original_input = input_data[0, :, :]
 
 
 def put_new_data(data, batch):
@@ -528,6 +447,12 @@ with tf.Session() as sess:
         test(full=True)
         sys.exit()
     elif args.reconstructions:
+        reconstructions = [None] * episode_length
+        for i in xrange(episode_length):
+            reconstructions[i] = tf.sigmoid(train_samples[VAE.observed_name(i) + '_logit'][0, :])
+        reconstructions = tf.pack(reconstructions)
+        original_input = input_data[0, :, :]
+
         while True:
             sample, original = sess.run([reconstructions, original_input])
             plt.matshow(np.hstack([sample.reshape(28 * episode_length, 28),
@@ -542,21 +467,17 @@ with tf.Session() as sess:
         time_step = args.generate
         num_object = args.generate+1
 
-        # train_samples['gen_strength_%d_%d' % (time_step, num_object)] =
-        # np.ones([batch_size, 1], dtype=np.float32) * 100.
-
-        obs = vae.generate(time_step, num_object, False)
-        if VAE.hidden_name(time_step, num_object) in train_samples:
-            del train_samples[VAE.hidden_name(time_step, num_object)]
-        if VAE.observed_name(time_step, num_object) in train_samples:
-            del train_samples[VAE.observed_name(time_step, num_object)]
+        obs = vae.generate(time_step, False)
+        if VAE.hidden_name(time_step) in train_samples:
+            del train_samples[VAE.hidden_name(time_step)]
+        if VAE.observed_name(time_step) in train_samples:
+            del train_samples[VAE.observed_name(time_step)]
         obs.backtrace(train_samples, batch=episode_length)
 
         data = load_data(args.test_dataset)
         input_batch = np.zeros([batch_size, episode_length, data_dim])
 
-        logits = tf.sigmoid(train_samples[VAE.observed_name(time_step, num_object) + '_logit'])
-        # strength = train_samples['gen_strength_%d_%d' % (time_step, num_object)]
+        logits = tf.sigmoid(train_samples[VAE.observed_name(time_step) + '_logit'])
 
         while True:
             put_new_data(data, input_batch)
