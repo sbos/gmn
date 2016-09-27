@@ -141,14 +141,14 @@ class VAE(object):
         self.prior_steps = 3
 
         with tf.variable_scope('recognition') as vs:
-            self.rec = rec(hidden_dim, state_dim)
+            self.rec = rec(hidden_dim, state_dim + 288)
             self.features_dim = self.rec.features_dim
             self._rec_query = scg.Affine(state_dim + self.features_dim, self.features_dim,
                                          fun='prelu', init=scg.he_normal)
             self._rec_strength = scg.Affine(state_dim, 1, init=scg.he_normal)
 
         with tf.variable_scope('generation') as vs:
-            self.gen = gen(hidden_dim, state_dim)
+            self.gen = gen(hidden_dim, state_dim + self.features_dim)
             self._gen_query = scg.Affine(state_dim + hidden_dim, self.features_dim,
                                          fun='prelu', init=scg.he_normal)
             self._gen_strength = scg.Affine(state_dim, 1, init=scg.he_normal)
@@ -186,7 +186,7 @@ class VAE(object):
                 rec_response, rec_state = self.set_repr.recognize(self.features, timestep, rec_query,
                                                                   self.num_steps, strength=rec_strength)
 
-                self.z[timestep] = self.rec.recognize(self.features[timestep], rec_state,
+                self.z[timestep] = self.rec.recognize(self.features[timestep], scg.concat([rec_response, rec_state]),
                                                       VAE.hidden_name(timestep))
 
             self.x[timestep] = self.generate(timestep)
@@ -198,10 +198,10 @@ class VAE(object):
         def prior_strength(state):
             return self._prior_strength(input=state)
 
-        _, prior_state = self.prior_repr.recognize(self.features, timestep, prior_query, self.prior_steps,
-                                                   strength=prior_strength, dummy=dummy)
+        prior_response, prior_state = self.prior_repr.recognize(self.features, timestep, prior_query, self.prior_steps,
+                                                                strength=prior_strength, dummy=dummy)
 
-        z_prior = self.gen.generate_prior(prior_state, VAE.hidden_name(timestep))
+        z_prior = self.gen.generate_prior(scg.concat([prior_response, prior_state]), VAE.hidden_name(timestep))
 
         def gen_query(state):
             return self._gen_query(input=scg.concat([state, z_prior]))
@@ -212,7 +212,7 @@ class VAE(object):
         gen_response, gen_state = self.set_repr.recognize(self.features, timestep, gen_query,
                                                           self.num_steps, strength=gen_strength,
                                                           dummy=dummy)
-        return self.gen.generate(z_prior, gen_state, VAE.observed_name(timestep))
+        return self.gen.generate(z_prior, scg.concat([gen_response, gen_state]), VAE.observed_name(timestep))
 
     def sample(self, cache=None):
         if cache is None:
