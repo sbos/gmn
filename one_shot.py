@@ -4,7 +4,7 @@ import os
 import sys
 import time
 from threading import Thread
-from utils import ResNet
+from utils import ResNet, SetRepresentation
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -36,28 +36,26 @@ episode_length = args.episode
 
 
 class GenerativeModel:
-    def __init__(self, hidden_dim, state_dim, param_dim):
+    def __init__(self, hidden_dim, state_dim):
         self.hidden_dim = hidden_dim
-        self.param_dim = param_dim
 
         self.hp = scg.Affine(state_dim, 200, 'prelu', scg.he_normal)
         self.mu = scg.Affine(200, self.hidden_dim, None, scg.he_normal)
         self.pre_sigma = scg.Affine(200, self.hidden_dim, None, scg.he_normal)
         self.prior = scg.Normal(self.hidden_dim)
 
-        self.h0 = scg.Affine(hidden_dim + param_dim, 3*3*32, fun=None, init=scg.he_normal)
+        self.h0 = scg.Affine(hidden_dim + state_dim, 3*3*32, fun=None, init=scg.he_normal)
         self.h1 = ResNet.section([3, 3, 32], [2, 2], 32, 2, [2, 2], downscale=False)
         self.h2 = ResNet.section([6, 6, 32], [3, 3], 16, 2, [3, 3], downscale=False)
         self.h3 = ResNet.section([13, 13, 16], [4, 4], 8, 2, [3, 3], downscale=False)
         self.conv = scg.Convolution2d([28, 28, 8], [1, 1], 1, padding='VALID',
                                       init=scg.he_normal)
 
-        self.strength = scg.Affine(state_dim, 1, init=scg.he_normal)
-
     def generate_prior(self, state, hidden_name):
         hp = self.hp(input=state)
         z = self.prior(name=hidden_name, mu=self.mu(input=hp),
                        pre_sigma=self.pre_sigma(input=hp))
+        # z = self.prior(name=hidden_name)
 
         return z
 
@@ -77,9 +75,8 @@ class GenerativeModel:
 
 
 class RecognitionModel:
-    def __init__(self, hidden_dim, param_dim, state_dim):
+    def __init__(self, hidden_dim, state_dim):
         self.hidden_dim = hidden_dim
-        self.param_dim = param_dim
 
         self.init = scg.norm_init(scg.he_normal)
 
@@ -87,10 +84,10 @@ class RecognitionModel:
         self.h2 = ResNet.section([13, 13, 16], [3, 3], 32, 2, [3, 3])
         self.h3 = ResNet.section([6, 6, 32], [2, 2], 32, 2, [2, 2])
 
-        self.features_dim = 3 * 3 * 32 # np.prod(self.h3.shape)
+        self.features_dim = 3 * 3 * 32  # np.prod(self.h3.shape)
 
-        self.mu = scg.Affine(self.features_dim + param_dim, hidden_dim)
-        self.sigma = scg.Affine(self.features_dim + param_dim, hidden_dim)
+        self.mu = scg.Affine(self.features_dim + state_dim, hidden_dim)
+        self.sigma = scg.Affine(self.features_dim + state_dim, hidden_dim)
 
         self.strength = scg.Affine(state_dim, 1, init=scg.he_normal)
 
@@ -108,74 +105,6 @@ class RecognitionModel:
         sigma = self.sigma(input=h, name=hidden_name + '_sigma')
         z = scg.Normal(self.hidden_dim)(mu=mu, pre_sigma=sigma, name=hidden_name)
         return z
-
-
-class ParamRecognition:
-    def __init__(self, state_dim, hidden_dim, mem_dim=100):
-        init = scg.he_normal
-
-        self.feature_dim = 3 * 3 * 32
-
-        self.param_dim = 200
-        self.source_encoder = scg.Affine(self.feature_dim, mem_dim,
-                                         fun='prelu', init=init)
-
-        self.cell = scg.GRU(self.feature_dim, state_dim, fun='prelu', init=scg.he_normal)
-
-        self.query_encoder = scg.Affine(hidden_dim, mem_dim,
-                                         fun='prelu', init=init)
-        self.param_encoder = scg.Affine(self.feature_dim, self.param_dim,
-                                        fun='prelu', init=init)
-        self.dummy_mem = scg.Constant(tf.Variable(tf.random_uniform([1, mem_dim],
-                                                                    -1. / mem_dim,
-                                                                    1. / mem_dim)))()
-        self.dummy_param = scg.Constant(tf.Variable(tf.zeros([1, self.param_dim])))()
-
-    def update(self, state, features):
-        # features = self.get_features(obs)
-        state = self.cell(input=features, state=state)
-        return state
-
-    def encode_source(self, state, features):
-        # features = self.get_features(obs)
-        return self.param_encoder(input=scg.concat([features])), \
-               self.source_encoder(input=scg.concat([features]))
-
-    def encode_query(self, state, z):
-        return self.query_encoder(input=scg.concat([z]))
-        # return self.query_encoder(input=z)
-
-    # returns parameters and features
-    # latter are used to compute kernel weights
-    def build_memory(self, state, observations, time_step, dummy=True):
-        mem = []
-        params = []
-        if dummy:
-            mem.append(scg.batch_repeat(self.dummy_mem, state))
-            params.append(scg.batch_repeat(self.dummy_param, state))
-
-        for t in xrange(time_step):
-            param, cell = self.encode_source(state, observations[t])
-
-            def transform(input=None):
-                return tf.expand_dims(input, 1)
-
-            param = scg.apply(transform, input=param)
-            cell = scg.apply(transform, input=cell)
-
-            params.append(param)
-            mem.append(cell)
-
-        params, mem = scg.concat(params, 1), scg.concat(mem, 1)
-        return params, mem
-
-    def query(self, resources, query, strength):
-        features, sources = resources
-
-        attention = scg.Attention()(mem=sources, key=query,
-                                    strength=strength)
-
-        return scg.AttentiveReader()(attention=attention, mem=features)
 
 
 def lower_bound(w):
@@ -210,23 +139,31 @@ class VAE:
     def params_name(step):
         return 'theta_' + str(step)
 
-    def __init__(self, input_data, hidden_dim, gen, rec, par=None):
+    def __init__(self, input_data, hidden_dim, gen, rec):
         state_dim = 200
-
-        with tf.variable_scope('both') as vs:
-            self.init_state = scg.Constant(tf.Variable(tf.zeros((state_dim,)), trainable=True))()
-            self.both_vars = [var for var in tf.all_variables() if var.name.startswith(vs.name)]
+        self.num_steps = 3
+        self.prior_steps = 2
 
         with tf.variable_scope('recognition') as vs:
-            self.par = par(state_dim, hidden_dim)
-            self.rec = rec(hidden_dim, self.par.param_dim, state_dim)
-
-            self.rec_vars = self.both_vars + [var for var in tf.all_variables() if var.name.startswith(vs.name)]
+            # self.par = par(state_dim, hidden_dim)
+            self.rec = rec(hidden_dim, state_dim)
+            self.features_dim = self.rec.features_dim
+            self._rec_query = scg.Affine(state_dim + self.features_dim, self.features_dim,
+                                         fun='prelu', init=scg.he_normal)
+            self._rec_strength = scg.Affine(state_dim, 1, init=scg.he_normal)
 
         with tf.variable_scope('generation') as vs:
-            self.gen = gen(hidden_dim, state_dim, self.par.param_dim)
+            self.gen = gen(hidden_dim, state_dim)
+            self._gen_query = scg.Affine(state_dim + hidden_dim, self.features_dim,
+                                         fun='prelu', init=scg.he_normal)
+            self._gen_strength = scg.Affine(state_dim, 1, init=scg.he_normal)
 
-            self.gen_vars = self.both_vars + [var for var in tf.all_variables() if var.name.startswith(vs.name)]
+            self._prior_query = scg.Affine(state_dim, self.features_dim, fun='prelu', init=scg.he_normal)
+            self._prior_strength = scg.Affine(state_dim, 1, init=scg.he_normal)
+            self.prior_repr = SetRepresentation(self.features_dim, state_dim)
+
+        with tf.variable_scope('both') as vs:
+            self.set_repr = SetRepresentation(self.features_dim, state_dim)
 
         self.z = [None] * episode_length
         self.x = [None] * (episode_length+1)
@@ -243,45 +180,47 @@ class VAE:
         for t in xrange(episode_length):
             self.features.append(self.rec.get_features(self.obs[t]))
 
-        state = scg.BatchRepeat()(batch=scg.StealBatch()(input=self.obs[0]),
-                                  input=self.init_state)
-        self.states = []
         self.mem = []
         self.clear_mem = []
 
         for timestep in xrange(episode_length+1):
-            self.states.append(state)
-
-            resources = self.par.build_memory(state, self.features, timestep)
-            self.mem.append(resources)
-            self.clear_mem.append(self.par.build_memory(state, self.features,
-                                                        timestep, False))
-
             if timestep < episode_length:
-                param = self.par.query(resources,
-                                       self.par.encode_source(state, self.features[timestep])[1],
-                                       self.rec.strength(input=state))
+                def rec_query(state):
+                    return self._rec_query(input=scg.concat([state, self.features[timestep]]))
 
-                self.z[timestep] = self.rec.recognize(self.features[timestep], param,
+                def rec_strength(state):
+                    return self._rec_strength(input=state)
+
+                rec_response, rec_state = self.set_repr.recognize(self.features, timestep, rec_query,
+                                                                  self.num_steps, strength=rec_strength)
+
+                self.z[timestep] = self.rec.recognize(self.features[timestep], rec_state,
                                                       VAE.hidden_name(timestep))
 
             self.x[timestep] = self.generate(timestep)
 
-            if timestep < episode_length:
-                state = self.par.update(state, self.features[timestep])
-
     def generate(self, timestep, dummy=True):
-        state = self.states[timestep]
-        mem = self.mem
-        if not dummy:
-            mem = self.clear_mem
-        resources = mem[timestep]
+        def prior_query(state):
+            return self._prior_query(input=state)
 
-        z_prior = self.gen.generate_prior(state, VAE.hidden_name(timestep))
-        param = self.par.query(resources,
-                               self.par.encode_query(state, z_prior),
-                               self.gen.strength(input=state, name='gen_strength_%d' % timestep))
-        return self.gen.generate(z_prior, param, VAE.observed_name(timestep))
+        def prior_strength(state):
+            return self._prior_strength(input=state)
+
+        _, prior_state = self.prior_repr.recognize(self.features, timestep, prior_query, self.prior_steps,
+                                                   strength=prior_strength, dummy=dummy)
+
+        z_prior = self.gen.generate_prior(prior_state, VAE.hidden_name(timestep))
+
+        def gen_query(state):
+            return self._gen_query(input=scg.concat([state, z_prior]))
+
+        def gen_strength(state):
+            return self._gen_strength(input=state)
+
+        gen_response, gen_state = self.set_repr.recognize(self.features, timestep, gen_query,
+                                                          self.num_steps, strength=gen_strength,
+                                                          dummy=dummy)
+        return self.gen.generate(z_prior, gen_state, VAE.observed_name(timestep))
 
     def sample(self, cache=None):
         for i in xrange(episode_length):
@@ -316,7 +255,7 @@ input_data = data_queue.dequeue_many(batch_size)
 binarized = tf.cast(tf.less_equal(tf.random_uniform(tf.shape(input_data)), input_data), tf.float32)
 
 with tf.variable_scope('model'):
-    vae = VAE(binarized, args.hidden_dim, GenerativeModel, RecognitionModel, ParamRecognition)
+    vae = VAE(binarized, args.hidden_dim, GenerativeModel, RecognitionModel)
 train_samples = vae.sample(None)
 weights = vae.importance_weights(train_samples)
 
@@ -336,17 +275,6 @@ learning_rate = tf.placeholder(tf.float32)
 
 epoch_passed = tf.Variable(0)
 increment_passed = epoch_passed.assign_add(1)
-
-
-def grads_and_vars(vars_and_losses):
-    grads = dict()
-    for vars, loss in vars_and_losses:
-        for var, grad in zip(vars, tf.gradients(loss, vars)):
-            if var not in grads:
-                grads[var] = grad
-            else:
-                grads[var] += grad
-    return [(grad, var) for var, grad in grads.iteritems()]
 
 reg = 0.
 for var in tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='model'):
@@ -518,6 +446,7 @@ with tf.Session() as sess:
 
                 msg = '\repoch {0}, batch {1} '.format(epoch, i)
                 for t in xrange(episode_length):
+                    assert not np.isnan(pred_lb[t])
                     msg += ' %.2f' % pred_lb[t]
                 sys.stdout.write(msg)
                 sys.stdout.flush()
