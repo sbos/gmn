@@ -5,6 +5,7 @@ import sys
 import time
 from threading import Thread
 from utils import ResNet, SetRepresentation
+from numba import jit
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -60,14 +61,10 @@ class GenerativeModel:
         return z
 
     def generate(self, z, param, observed_name):
-        with tf.variable_scope(observed_name + '_h0'):
-            h = self.h0(input=scg.concat([z, param]))
-        with tf.variable_scope(observed_name + '_h1'):
-            h = self.h1(h)
-        with tf.variable_scope(observed_name + '_h2'):
-            h = self.h2(h)
-        with tf.variable_scope(observed_name + '_h3'):
-            h = self.h3(h)
+        h = self.h0(input=scg.concat([z, param]))
+        h = self.h1(h)
+        h = self.h2(h)
+        h = self.h3(h)
 
         h = self.conv(input=h, name=observed_name + '_logit')
 
@@ -99,7 +96,6 @@ class RecognitionModel:
         return h
 
     def recognize(self, h, param, hidden_name):
-        # h = self.get_features(obs)
         h = scg.concat([h, param])
         mu = self.mu(input=h, name=hidden_name + '_mu')
         sigma = self.sigma(input=h, name=hidden_name + '_sigma')
@@ -126,7 +122,7 @@ def predictive_ll(w):
     return tf.pack(ll)
 
 
-class VAE:
+class VAE(object):
     @staticmethod
     def hidden_name(step):
         return 'z_' + str(step)
@@ -141,11 +137,10 @@ class VAE:
 
     def __init__(self, input_data, hidden_dim, gen, rec):
         state_dim = 200
-        self.num_steps = 3
-        self.prior_steps = 2
+        self.num_steps = 6
+        self.prior_steps = 3
 
         with tf.variable_scope('recognition') as vs:
-            # self.par = par(state_dim, hidden_dim)
             self.rec = rec(hidden_dim, state_dim)
             self.features_dim = self.rec.features_dim
             self._rec_query = scg.Affine(state_dim + self.features_dim, self.features_dim,
@@ -179,9 +174,6 @@ class VAE:
         self.features = []
         for t in xrange(episode_length):
             self.features.append(self.rec.get_features(self.obs[t]))
-
-        self.mem = []
-        self.clear_mem = []
 
         for timestep in xrange(episode_length+1):
             if timestep < episode_length:
@@ -223,9 +215,13 @@ class VAE:
         return self.gen.generate(z_prior, gen_state, VAE.observed_name(timestep))
 
     def sample(self, cache=None):
+        if cache is None:
+            cache = {}
         for i in xrange(episode_length):
-            cache = self.z[i].backtrace(cache)
-            cache = self.x[i].backtrace(cache)
+            time_start = time.time()
+            self.z[i].backtrace(cache)
+            self.x[i].backtrace(cache)
+            print i, time.time() - time_start
         return cache
 
     def importance_weights(self, cache):
@@ -258,9 +254,6 @@ with tf.variable_scope('model'):
     vae = VAE(binarized, args.hidden_dim, GenerativeModel, RecognitionModel)
 train_samples = vae.sample(None)
 weights = vae.importance_weights(train_samples)
-
-test_samples = vae.sample(None)
-test_weights = vae.importance_weights(test_samples)
 
 train_pred_lb = predictive_lb(weights)
 train_pred_ll = predictive_ll(weights)

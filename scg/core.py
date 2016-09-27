@@ -2,7 +2,6 @@ import numpy as np
 import random
 import tensorflow as tf
 import string
-import inspect
 
 name_random = random.Random()
 name_random.seed(0)
@@ -12,7 +11,7 @@ def id_generator(size=6, chars=string.ascii_uppercase + string.digits):
     return ''.join(name_random.choice(chars) for _ in range(size))
 
 
-class Node:
+class Node(object):
     def __init__(self, name, prototype, input_nodes):
         self.prototype = prototype
         self.name = name
@@ -21,31 +20,40 @@ class Node:
         for node in self.input_nodes.itervalues():
             assert isinstance(node, Node), node
 
-    def backtrace(self, cache=None, callback=lambda node, value, **inputs: None, **inputs):
+    def backtrace(self, cache=None, callback=None, visited=None, **inputs):
         if cache is None:
             cache = {}
+        if visited is None:
+            visited = set()
+
+        if self.name in visited:
+            value = cache.get(self.name, None)
+            assert value is not None
+            return value
 
         input_values = {}
         for channel_name, node in self.input_nodes.iteritems():
-            node.backtrace(cache, callback=callback, **inputs)
-            assert cache[node.name] is not None
-            input_values[channel_name] = cache[node.name]
+            channel_value = node.backtrace(cache, callback=callback, visited=visited, **inputs)
+            assert channel_value is not None
+            input_values[channel_name] = channel_value
 
+        arg_names = self.prototype.flow.func_code.co_varnames[:self.prototype.flow.func_code.co_argcount]
         for input_name, value in inputs.iteritems():
             # assert input_name not in input_values
-            arg_names = self.prototype.flow.func_code.co_varnames[:self.prototype.flow.func_code.co_argcount]
             if input_name in arg_names:
                 input_values[input_name] = value
 
+        visited.add(self.name)
         value = cache.get(self.name, None)
         if value is None:
             with tf.variable_scope(self.name):
                 value = self.prototype.flow(**input_values)
             cache[self.name] = value
 
-        callback(self, value, **input_values)
+        if callback is not None:
+            callback(self, value, **input_values)
 
-        return cache
+        return value
 
     @property
     def shape(self):
