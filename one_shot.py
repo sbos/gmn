@@ -40,7 +40,7 @@ class GenerativeModel:
     def __init__(self, hidden_dim, state_dim):
         self.hidden_dim = hidden_dim
 
-        self.hp = scg.Affine(state_dim, 200, 'prelu', scg.he_normal)
+        self.hp = scg.Affine(state_dim, 200, 'prelu', scg.norm_init(scg.he_normal))
         self.mu = scg.Affine(200, self.hidden_dim, None, scg.he_normal)
         self.pre_sigma = scg.Affine(200, self.hidden_dim, None, scg.he_normal)
         self.prior = scg.Normal(self.hidden_dim)
@@ -56,7 +56,6 @@ class GenerativeModel:
         hp = self.hp(input=state)
         z = self.prior(name=hidden_name, mu=self.mu(input=hp),
                        pre_sigma=self.pre_sigma(input=hp))
-        # z = self.prior(name=hidden_name)
 
         return z
 
@@ -85,8 +84,6 @@ class RecognitionModel:
 
         self.mu = scg.Affine(self.features_dim + state_dim, hidden_dim)
         self.sigma = scg.Affine(self.features_dim + state_dim, hidden_dim)
-
-        self.strength = scg.Affine(state_dim, 1, init=scg.he_normal)
 
     def get_features(self, obs):
         h = self.h1(obs)
@@ -137,24 +134,24 @@ class VAE(object):
 
     def __init__(self, input_data, hidden_dim, gen, rec):
         state_dim = 200
-        self.num_steps = 6
-        self.prior_steps = 3
+        self.num_steps = 8
+        self.prior_steps = 4
 
         with tf.variable_scope('recognition') as vs:
             self.rec = rec(hidden_dim, state_dim + 288)
             self.features_dim = self.rec.features_dim
             self._rec_query = scg.Affine(state_dim + self.features_dim, self.features_dim,
-                                         fun='prelu', init=scg.he_normal)
-            self._rec_strength = scg.Affine(state_dim, 1, init=scg.he_normal)
+                                         fun='prelu', init=scg.norm_init(scg.he_normal))
+            self._rec_strength = scg.Affine(state_dim, 1, init=scg.norm_init(scg.he_normal))
 
         with tf.variable_scope('generation') as vs:
             self.gen = gen(hidden_dim, state_dim + self.features_dim)
             self._gen_query = scg.Affine(state_dim + hidden_dim, self.features_dim,
-                                         fun='prelu', init=scg.he_normal)
-            self._gen_strength = scg.Affine(state_dim, 1, init=scg.he_normal)
+                                         fun='prelu', init=scg.norm_init(scg.he_normal))
+            self._gen_strength = scg.Affine(state_dim, 1, init=scg.norm_init(scg.he_normal))
 
-            self._prior_query = scg.Affine(state_dim, self.features_dim, fun='prelu', init=scg.he_normal)
-            self._prior_strength = scg.Affine(state_dim, 1, init=scg.he_normal)
+            self._prior_query = scg.Affine(state_dim, self.features_dim, fun='prelu', init=scg.norm_init(scg.he_normal))
+            self._prior_strength = scg.Affine(state_dim, 1, init=scg.norm_init(scg.he_normal))
             self.prior_repr = SetRepresentation(self.features_dim, state_dim)
 
         with tf.variable_scope('both') as vs:
