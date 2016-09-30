@@ -31,6 +31,7 @@ parser.add_argument('--l2', type=float, default=0.)
 args = parser.parse_args()
 
 tf.set_random_seed(args.seed)
+np.random.seed(args.seed)
 
 data_dim = 28*28
 episode_length = args.episode
@@ -257,9 +258,6 @@ train_pred_ll = predictive_ll(weights)
 
 vlb_gen = lower_bound(weights)
 
-ema = tf.train.ExponentialMovingAverage(0.99)
-avg_op = ema.apply([vlb_gen, train_pred_lb])
-
 global_step = tf.Variable(0, trainable=False)
 learning_rate = tf.placeholder(tf.float32)
 
@@ -272,14 +270,8 @@ for var in tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='model'):
 
 train_objective = -vlb_gen + args.l2 * reg
 
-opt_op = tf.train.AdamOptimizer(beta2=0.99, epsilon=1e-8, learning_rate=learning_rate,
-                                use_locking=False).minimize(train_objective, global_step)
-
-with tf.control_dependencies([opt_op]):
-    train_op = tf.group(avg_op)
-
-avg_vlb = ema.average(vlb_gen)
-avg_pred_lb = ema.average(train_pred_lb)
+train_op = tf.train.AdamOptimizer(beta2=0.99, epsilon=1e-8, learning_rate=learning_rate,
+                                  use_locking=False).minimize(train_objective, global_step)
 
 
 def put_new_data(data, batch):
@@ -422,6 +414,8 @@ with tf.Session() as sess:
 
         sys.exit()
 
+    avg_pred_lb = np.zeros([episode_length])
+
     for epochs, lr in zip([250, 250, 250], [1e-3, 3e-4, 1e-4]):
         for epoch in xrange(epochs):
             if num_epochs < done_epochs:
@@ -431,13 +425,14 @@ with tf.Session() as sess:
             epoch_started = time.time()
             total_batches = 24345 / batch_size / episode_length
             for batch in xrange(total_batches):
-                lb, pred_lb, i, _ = sess.run([avg_vlb, avg_pred_lb, global_step, train_op],
-                                             feed_dict={learning_rate: lr})
+                pred_lb, i, _ = sess.run([train_pred_lb, global_step, train_op],
+                                         feed_dict={learning_rate: lr})
 
                 msg = '\repoch {0}, batch {1} '.format(epoch, i)
                 for t in xrange(episode_length):
                     assert not np.isnan(pred_lb[t])
-                    msg += ' %.2f' % pred_lb[t]
+                    avg_pred_lb += 0.99 * (pred_lb - avg_pred_lb)
+                    msg += ' %.2f' % avg_pred_lb[t]
                 sys.stdout.write(msg)
                 sys.stdout.flush()
                 if batch == total_batches-1:
