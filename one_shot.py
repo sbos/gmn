@@ -27,6 +27,9 @@ parser.add_argument('--train-dataset', type=str, default='data/train_small.npz')
 parser.add_argument('--batch', type=int, default=20)
 parser.add_argument('--seed', type=int, default=123)
 parser.add_argument('--l2', type=float, default=0.)
+parser.add_argument('--prior-hops', type=int, default=1)
+parser.add_argument('--hops', type=int, default=1)
+
 
 args = parser.parse_args()
 
@@ -135,8 +138,8 @@ class VAE(object):
 
     def __init__(self, input_data, hidden_dim, gen, rec):
         state_dim = 200
-        self.num_steps = 8
-        self.prior_steps = 4
+        self.num_steps = args.hops
+        self.prior_steps = args.prior_hops
 
         with tf.variable_scope('recognition') as vs:
             self.rec = rec(hidden_dim, state_dim + 288)
@@ -414,7 +417,7 @@ with tf.Session() as sess:
 
         sys.exit()
 
-    avg_pred_lb = np.zeros([episode_length])
+    avg_pred_lb = np.zeros(episode_length)
 
     for epochs, lr in zip([250, 250, 250], [1e-3, 3e-4, 1e-4]):
         for epoch in xrange(epochs):
@@ -429,9 +432,9 @@ with tf.Session() as sess:
                                          feed_dict={learning_rate: lr})
 
                 msg = '\repoch {0}, batch {1} '.format(epoch, i)
+                avg_pred_lb += 0.01 * (pred_lb - avg_pred_lb)
                 for t in xrange(episode_length):
                     assert not np.isnan(pred_lb[t])
-                    avg_pred_lb += 0.99 * (pred_lb - avg_pred_lb)
                     msg += ' %.2f' % avg_pred_lb[t]
                 sys.stdout.write(msg)
                 sys.stdout.flush()
