@@ -130,18 +130,15 @@ def predictive_lb(w):
     return tf.reduce_mean(w, 1)
 
 
-def predictive_ll(w, episode_length):
-    ll = [0.] * episode_length
-    max_w = tf.reduce_max(w, 1)
-
-    for i in xrange(len(ll)):
-        adjusted_w = w[i, :] - max_w[i]
-        ll[i] += tf.log(tf.reduce_mean(tf.exp(adjusted_w))) + max_w[i]
-
-    return tf.pack(ll)
+def predictive_ll(w):
+    w = tf.transpose(w)
+    max_w = tf.reduce_max(w, 0)
+    adjusted_w = w - max_w
+    ll = tf.log(tf.reduce_mean(tf.exp(adjusted_w), 0)) + max_w
+    return ll
 
 
-def re_arrange(w, episode_length, bucket_length):
-    # w has shape (N * bucket_length) x episode_length
-    # we should transform it to N x (
-    return 0
+def probability_classification(w, n_classes, n_samples):
+    w = tf.reshape(w, [n_classes, n_samples])
+    w = tf.transpose(w)
+    return tf.arg_max(predictive_ll(w), 0)

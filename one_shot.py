@@ -243,7 +243,7 @@ train_samples = vae.sample(None)
 weights = vae.importance_weights(train_samples)
 
 train_pred_lb = predictive_lb(weights)
-train_pred_ll = predictive_ll(weights, episode_length)
+train_pred_ll = predictive_ll(weights)
 
 vlb_gen = lower_bound(weights)
 
