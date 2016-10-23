@@ -4,9 +4,8 @@ import os
 import sys
 import time
 from threading import Thread
-from utils import ResNet, SetRepresentation
-from numba import jit
-
+from utils import ResNet, SetRepresentation, put_new_data, load_data, predictive_lb, predictive_ll, lower_bound
+from classification import one_shot_classification, cos_sim
 import matplotlib.pyplot as plt
 import numpy as np
 import tensorflow as tf
@@ -18,6 +17,7 @@ parser.add_argument('--episode', type=int, default=10)
 parser.add_argument('--checkpoint', type=str, default=None)
 parser.add_argument('--hidden-dim', type=int, default=50)
 parser.add_argument('--test', type=int, default=None)
+parser.add_argument('--classification', type=int, default=None)
 parser.add_argument('--max-classes', type=int, default=2)
 parser.add_argument('--test-episodes', type=int, default=1000)
 parser.add_argument('--reconstructions', action='store_const', const=True)
@@ -29,12 +29,17 @@ parser.add_argument('--seed', type=int, default=123)
 parser.add_argument('--l2', type=float, default=0.)
 parser.add_argument('--prior-hops', type=int, default=1)
 parser.add_argument('--hops', type=int, default=1)
+parser.add_argument('--shots', type=int, default=1)
 
 
 args = parser.parse_args()
 
 tf.set_random_seed(args.seed)
 np.random.seed(args.seed)
+
+if args.classification is not None:
+    args.batch = args.max_classes
+    args.episode = args.max_classes * args.shots + 1
 
 data_dim = 28*28
 episode_length = args.episode
@@ -58,8 +63,8 @@ class GenerativeModel:
 
     def generate_prior(self, state, hidden_name):
         hp = self.hp(input=state)
-        z = self.prior(name=hidden_name, mu=self.mu(input=hp),
-                       pre_sigma=self.pre_sigma(input=hp))
+        z = self.prior(name=hidden_name, mu=self.mu(input=hp, name=hidden_name + '_prior_mu'),
+                       pre_sigma=self.pre_sigma(input=hp, name=hidden_name + '_prior_sigma'))
 
         return z
 
@@ -102,25 +107,6 @@ class RecognitionModel:
         sigma = self.sigma(input=h, name=hidden_name + '_sigma')
         z = scg.Normal(self.hidden_dim)(mu=mu, pre_sigma=sigma, name=hidden_name)
         return z
-
-
-def lower_bound(w):
-    return tf.reduce_sum(tf.reduce_mean(w, 1))
-
-
-def predictive_lb(w):
-    return tf.reduce_mean(w, 1)
-
-
-def predictive_ll(w):
-    ll = [0.] * episode_length
-    max_w = tf.reduce_max(w, 1)
-
-    for i in xrange(len(ll)):
-        adjusted_w = w[i, :] - max_w[i]
-        ll[i] += tf.log(tf.reduce_mean(tf.exp(adjusted_w))) + max_w[i]
-
-    return tf.pack(ll)
 
 
 class VAE(object):
@@ -257,7 +243,7 @@ train_samples = vae.sample(None)
 weights = vae.importance_weights(train_samples)
 
 train_pred_lb = predictive_lb(weights)
-train_pred_ll = predictive_ll(weights)
+train_pred_ll = predictive_ll(weights, episode_length)
 
 vlb_gen = lower_bound(weights)
 
@@ -276,26 +262,6 @@ train_objective = -vlb_gen + args.l2 * reg
 train_op = tf.train.AdamOptimizer(beta2=0.99, epsilon=1e-8, learning_rate=learning_rate,
                                   use_locking=False).minimize(train_objective, global_step)
 
-
-def put_new_data(data, batch):
-    import numpy as np
-
-    for j in xrange(batch.shape[0]):
-        random_classes = np.random.choice(data.shape[0], args.max_classes)
-        classes = np.random.choice(random_classes, batch.shape[1])
-        batch[j] = data[classes, np.random.choice(data.shape[1], batch.shape[1])]
-
-    np.true_divide(batch, 255., out=batch, casting='unsafe')
-
-
-def load_data(path):
-    raw_data = np.load(path)
-    data = []
-    min_size = min([raw_data[f].shape[0] for f in raw_data.files])
-    for cl in raw_data.files:
-        data.append(raw_data[cl][None, :min_size, :])
-    return np.concatenate(data, axis=0)
-
 saver = tf.train.Saver()
 with tf.Session() as sess:
     log = logging.getLogger()
@@ -310,7 +276,7 @@ with tf.Session() as sess:
         # test_data = np.load('data/test_small.npz')
 
         while coordinator is None or not coordinator.should_stop():
-            put_new_data(train_data, batch)
+            put_new_data(train_data, batch, args.max_classes)
             sess.run(enqueue_op, feed_dict={new_data: batch})
 
     coord = tf.train.Coordinator()
@@ -336,11 +302,11 @@ with tf.Session() as sess:
 
         for j in xrange(args.test_episodes):
             if full:
-                put_new_data(test_data, batch_data[:1, :, :])
+                put_new_data(test_data, batch_data[:1, :, :], args.max_classes)
                 for t in xrange(1, batch_data.shape[0]):
                     batch_data[t] = batch_data[0]
             else:
-                put_new_data(test_data, batch_data[:, :, :])
+                put_new_data(test_data, batch_data[:, :, :], args.max_classes)
 
             pred_ll = sess.run(target, feed_dict={input_data: batch_data})
             avg_predictive_ll += (pred_ll - avg_predictive_ll) / (j+1)
@@ -358,6 +324,9 @@ with tf.Session() as sess:
 
     if args.test is not None:
         test(full=True)
+
+        coord.request_stop()
+        # coord.join(data_threads)
         sys.exit()
     elif args.reconstructions:
         reconstructions = [None] * episode_length
@@ -373,6 +342,9 @@ with tf.Session() as sess:
                         cmap=plt.get_cmap('Greys'))
             plt.show()
             plt.close()
+
+        coord.request_stop()
+        # coord.join(data_threads)
         sys.exit()
     elif args.generate is not None:
         assert args.generate <= episode_length
@@ -393,7 +365,7 @@ with tf.Session() as sess:
         logits = tf.sigmoid(train_samples[VAE.observed_name(time_step) + '_logit'])
 
         while True:
-            put_new_data(data, input_batch)
+            put_new_data(data, input_batch, args.max_classes)
             for j in xrange(1, input_batch.shape[0]):
                 input_batch[j] = input_batch[0]
 
@@ -415,6 +387,40 @@ with tf.Session() as sess:
             plt.show()
             plt.close()
 
+        coord.request_stop()
+        # coord.join(data_threads)
+        sys.exit()
+    elif args.classification is not None:
+        mu = []
+        for t in xrange(episode_length):
+            mu.append(train_samples[VAE.hidden_name(t) + '_mu'])
+        mu = tf.squeeze(tf.pack(mu))
+
+        sim = np.zeros([args.max_classes, episode_length - 1])
+
+        def compute_similarities(batch):
+            batch_mu = sess.run(mu, feed_dict={input_data: batch})
+            train_mu = batch_mu[:-1, 0, :]
+            test_mu = batch_mu[-1, :, :]
+            batch_mu = np.vstack([test_mu, train_mu])
+
+            # for k in xrange(args.max_classes):
+            #     for j in xrange(train_mu.shape[0]):
+            #         sim[k, j] = np.exp(-np.square(np.linalg.norm(test_mu[k] - train_mu[j])) / 3.)
+            # return sim
+
+            sim = cos_sim(batch_mu)
+            return sim[:, args.max_classes:]
+
+        test_data = load_data(args.test_dataset)
+        accuracy = one_shot_classification(test_data, args.shots, args.max_classes,
+                                           compute_similarities, k_neighbours=args.classification,
+                                           num_episodes=args.test_episodes)
+
+        print 'accuracy: ', accuracy
+
+        coord.request_stop()
+        # coord.join(data_threads)
         sys.exit()
 
     avg_pred_lb = np.zeros(episode_length)
@@ -452,3 +458,4 @@ with tf.Session() as sess:
                 test()
 
     coord.request_stop()
+    # coord.join(data_threads)

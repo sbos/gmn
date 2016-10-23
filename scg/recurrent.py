@@ -107,4 +107,4 @@ class AttentiveReader(NodePrototype):
         assert mem is not None
 
         # with tf.control_dependencies([tf.Print(attention, [attention[0, :]])]):
-        return tf.squeeze(tf.batch_matmul(tf.expand_dims(attention, 1), mem))
+        return tf.squeeze(tf.batch_matmul(tf.expand_dims(attention, 1), mem), [1])

@@ -1,5 +1,6 @@
 import scg
 import tensorflow as tf
+import numpy as np
 
 
 class ResNet:
@@ -96,3 +97,51 @@ class SetRepresentation:
             state = self.cell(input=scg.concat([r, state]), state=state)
 
         return r, state
+
+
+def put_new_data(data, batch, max_classes):
+    import numpy as np
+
+    random_classes = np.random.choice(data.shape[0], [batch.shape[0], max_classes])
+    classes = np.zeros(batch.shape[:2], dtype=np.int64)
+
+    for j in xrange(batch.shape[0]):
+        classes[j] = np.random.choice(random_classes[j], batch.shape[1])
+        batch[j] = data[classes[j], np.random.choice(data.shape[1], batch.shape[1])]
+
+    np.true_divide(batch, 255., out=batch, casting='unsafe')
+    return classes
+
+
+def load_data(path):
+    raw_data = np.load(path)
+    data = []
+    min_size = min([raw_data[f].shape[0] for f in raw_data.files])
+    for cl in raw_data.files:
+        data.append(raw_data[cl][None, :min_size, :])
+    return np.concatenate(data, axis=0)
+
+
+def lower_bound(w):
+    return tf.reduce_sum(tf.reduce_mean(w, 1))
+
+
+def predictive_lb(w):
+    return tf.reduce_mean(w, 1)
+
+
+def predictive_ll(w, episode_length):
+    ll = [0.] * episode_length
+    max_w = tf.reduce_max(w, 1)
+
+    for i in xrange(len(ll)):
+        adjusted_w = w[i, :] - max_w[i]
+        ll[i] += tf.log(tf.reduce_mean(tf.exp(adjusted_w))) + max_w[i]
+
+    return tf.pack(ll)
+
+
+def re_arrange(w, episode_length, bucket_length):
+    # w has shape (N * bucket_length) x episode_length
+    # we should transform it to N x (
+    return 0
