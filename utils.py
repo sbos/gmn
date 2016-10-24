@@ -138,7 +138,9 @@ def predictive_ll(w):
     return ll
 
 
-def probability_classification(w, n_classes, n_samples):
+def likelihood_classification(w, n_classes, n_samples):
+    # w has shape ()
     w = tf.reshape(w, [n_classes, n_samples])
-    w = tf.transpose(w)
-    return tf.arg_max(predictive_ll(w), 0)
+    ll = predictive_ll(w)
+    return ll
+    # return tf.arg_max(ll, 0)

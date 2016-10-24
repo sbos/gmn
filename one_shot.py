@@ -4,8 +4,9 @@ import os
 import sys
 import time
 from threading import Thread
-from utils import ResNet, SetRepresentation, put_new_data, load_data, predictive_lb, predictive_ll, lower_bound
-from classification import one_shot_classification, cos_sim
+from utils import ResNet, SetRepresentation, put_new_data, load_data, \
+    predictive_lb, predictive_ll, lower_bound, likelihood_classification
+from classification import one_shot_classification, cos_sim, blackbox_classification
 import matplotlib.pyplot as plt
 import numpy as np
 import tensorflow as tf
@@ -30,6 +31,7 @@ parser.add_argument('--l2', type=float, default=0.)
 parser.add_argument('--prior-hops', type=int, default=1)
 parser.add_argument('--hops', type=int, default=1)
 parser.add_argument('--shots', type=int, default=1)
+parser.add_argument('--likelihood-classification', type=int, default=None)
 
 
 args = parser.parse_args()
@@ -37,9 +39,17 @@ args = parser.parse_args()
 tf.set_random_seed(args.seed)
 np.random.seed(args.seed)
 
+generate_columns = 10
+
 if args.classification is not None:
     args.batch = args.max_classes
     args.episode = args.max_classes * args.shots + 1
+elif args.likelihood_classification is not None:
+    args.batch = args.max_classes * args.likelihood_classification
+    args.episode = args.shots + 1
+elif args.generate is not None:
+    args.episode = args.generate + 1
+    args.batch = generate_columns * args.generate
 
 data_dim = 28*28
 episode_length = args.episode
@@ -350,7 +360,7 @@ with tf.Session() as sess:
         assert args.generate <= episode_length
 
         time_step = args.generate
-        num_object = args.generate+1
+        # num_object = args.generate+1
 
         obs = vae.generate(time_step, False)
         if VAE.hidden_name(time_step) in train_samples:
@@ -369,16 +379,20 @@ with tf.Session() as sess:
             for j in xrange(1, input_batch.shape[0]):
                 input_batch[j] = input_batch[0]
 
-            f, axs = plt.subplots(1, 11, sharey=True, squeeze=True)
-            axs[0].matshow(input_batch[0].reshape(input_batch.shape[1] * 28, 28), cmap=plt.get_cmap('gray'))
+            f, axs = plt.subplots(1, generate_columns + 1, sharey=True, squeeze=True)
+            conditional_data = input_batch[0, :-1, :]
+            axs[0].matshow(conditional_data.reshape(conditional_data.shape[0] * 28, 28), cmap=plt.get_cmap('gray'))
             axs[0].set_yticklabels(())
             axs[0].set_xticklabels(())
             plt.subplots_adjust(wspace=0.001)
             axs[0].axis('off')
 
-            for ax in axs[1:]:
-                img = sess.run(logits, feed_dict={input_data: input_batch})
-                ax.matshow(img.reshape(input_batch.shape[1] * 28, 28), cmap=plt.get_cmap('Greys'))
+            img = sess.run(logits, feed_dict={input_data: input_batch})
+            img = img.reshape(generate_columns, args.generate, data_dim)
+            for t in xrange(generate_columns):
+                ax = axs[t+1]
+                sample = img[t]
+                ax.matshow(sample.reshape(sample.shape[0] * 28, 28), cmap=plt.get_cmap('Greys'))
                 ax.set_yticklabels(())
                 ax.set_xticklabels(())
                 ax.title.set_visible(False)
@@ -421,6 +435,19 @@ with tf.Session() as sess:
 
         coord.request_stop()
         # coord.join(data_threads)
+        sys.exit()
+    elif args.likelihood_classification is not None:
+        test_data = load_data(args.test_dataset)
+        prediction = likelihood_classification(weights[-1], args.max_classes,
+                                               args.likelihood_classification)
+
+        def classify(batch):
+            return sess.run(prediction, feed_dict={input_data: batch})
+
+        accuracy = blackbox_classification(test_data, args.shots, args.max_classes,
+                                           classify, args.test_episodes, args.likelihood_classification)
+        print 'accuracy: ', accuracy
+
         sys.exit()
 
     avg_pred_lb = np.zeros(episode_length)
