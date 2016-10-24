@@ -48,7 +48,7 @@ elif args.likelihood_classification is not None:
     args.batch = args.max_classes * args.likelihood_classification
     args.episode = args.shots + 1
 elif args.generate is not None:
-    args.episode = args.generate + 1
+    args.episode = args.generate
     args.batch = generate_columns * args.generate
 
 data_dim = 28*28
@@ -367,7 +367,7 @@ with tf.Session() as sess:
             del train_samples[VAE.hidden_name(time_step)]
         if VAE.observed_name(time_step) in train_samples:
             del train_samples[VAE.observed_name(time_step)]
-        obs.backtrace(train_samples, batch=episode_length)
+        obs.backtrace(train_samples)
 
         data = load_data(args.test_dataset)
         input_batch = np.zeros([batch_size, episode_length, data_dim])
@@ -380,7 +380,7 @@ with tf.Session() as sess:
                 input_batch[j] = input_batch[0]
 
             f, axs = plt.subplots(1, generate_columns + 1, sharey=True, squeeze=True)
-            conditional_data = input_batch[0, :-1, :]
+            conditional_data = input_batch[0, :, :]
             axs[0].matshow(conditional_data.reshape(conditional_data.shape[0] * 28, 28), cmap=plt.get_cmap('gray'))
             axs[0].set_yticklabels(())
             axs[0].set_xticklabels(())
