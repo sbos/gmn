@@ -1,5 +1,6 @@
 import numpy as np
 import sys
+from utils import draw_episode
 
 
 def cos_sim(x):
@@ -53,35 +54,41 @@ def one_shot_classification(test_data, num_shots, num_classes, compute_similarit
 def blackbox_classification(test_data, num_shots, num_classes, classify,
                             num_episodes=10000, num_samples=100):
     data_dim = np.prod(test_data[0][0].shape)
-    batch = np.zeros([num_samples * num_classes, num_shots + 1, data_dim], dtype=np.float32)
+    batch = np.zeros([num_samples, num_shots + 1, data_dim], dtype=np.float32)
 
     accuracy = 0.
 
     for episode in xrange(num_episodes):
         classes = np.random.choice(test_data.shape[0], num_classes, False)
 
-        classes_idx = classes[:, np.newaxis].repeat(num_shots, 1).repeat(num_samples, 0)
-        test_classes_idx = classes[:, np.newaxis].repeat(num_samples, 0)
-
         idx = []
         for k in xrange(num_classes):
             idx.append(np.random.choice(test_data.shape[1], num_shots + 1, False))
         idx = np.vstack(idx)
-        train_idx = idx[:, :-1].repeat(num_samples, 0)
 
-        batch[:, :-1, :] = test_data[classes_idx, train_idx, :]
+        def score(k):
+            batch[0, :-1, :] = test_data[classes[k], idx[k, :-1]]
+            for j in xrange(1, batch.shape[0]):
+                batch[j] = batch[0]
+            scores = np.zeros(num_classes)
+            for c in xrange(num_classes):
+                batch[:, -1, :] = test_data[classes[c], idx[c, -1]]
+                scores[c] = classify(batch / 255.)
+            return scores
 
         for k in xrange(num_classes):
-            batch[:, -1, :] = test_data[test_classes_idx, idx[k, -1], :].squeeze()
-            actual_batch = batch / 255.
-            # y_hat = classify(actual_batch)
-            ll = classify(actual_batch)
-            # print k, ll, '\n'
+            ll = score(k)
+            print k, ll, '\n'
             y_hat = ll.argmax()
             if y_hat == k:
                 accuracy += 1
+            else:
+                wrong = np.vstack([test_data[classes[y_hat], idx[y_hat, :-1]], test_data[classes[k], idx[k, -1]]])
+                draw_episode(wrong)
+                right = np.vstack([test_data[classes[k], idx[k, :-1]], test_data[classes[k], idx[k, -1]]])
+                draw_episode(right)
 
         status = 'episode: %d, accuracy: %f' % (episode, accuracy / num_classes / (episode + 1))
-        sys.stdout.write('\r' + status)
+        # sys.stdout.write('\r' + status)
 
     return accuracy / num_episodes / num_classes

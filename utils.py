@@ -1,6 +1,7 @@
 import scg
 import tensorflow as tf
 import numpy as np
+import matplotlib.pyplot as plt
 
 
 class ResNet:
@@ -144,3 +145,14 @@ def likelihood_classification(w, n_classes, n_samples):
     ll = predictive_ll(w)
     return ll
     # return tf.arg_max(ll, 0)
+
+
+def draw_episode(episode):
+    episode_length = episode.shape[0]
+    img = []
+    for t in xrange(episode_length):
+        img.append(episode[t].reshape(28, 28))
+    img = np.hstack(img)
+    plt.imshow(img)
+    plt.show()
+    plt.close()

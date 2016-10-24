@@ -45,7 +45,7 @@ if args.classification is not None:
     args.batch = args.max_classes
     args.episode = args.max_classes * args.shots + 1
 elif args.likelihood_classification is not None:
-    args.batch = args.max_classes * args.likelihood_classification
+    args.batch = args.likelihood_classification
     args.episode = args.shots + 1
 elif args.generate is not None:
     args.episode = args.generate
@@ -438,8 +438,9 @@ with tf.Session() as sess:
         sys.exit()
     elif args.likelihood_classification is not None:
         test_data = load_data(args.test_dataset)
-        prediction = likelihood_classification(weights[-1], args.max_classes,
-                                               args.likelihood_classification)
+        # prediction = likelihood_classification(weights[-1], args.max_classes,
+        #                                        args.likelihood_classification)
+        prediction = predictive_ll(weights)[-1]
 
         def classify(batch):
             return sess.run(prediction, feed_dict={input_data: batch})
