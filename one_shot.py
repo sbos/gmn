@@ -32,6 +32,7 @@ parser.add_argument('--prior-hops', type=int, default=1)
 parser.add_argument('--hops', type=int, default=1)
 parser.add_argument('--shots', type=int, default=1)
 parser.add_argument('--likelihood-classification', type=int, default=None)
+parser.add_argument('--no-dummy', action='store_const', const=True)
 
 
 args = parser.parse_args()
@@ -173,6 +174,10 @@ class VAE(object):
             self.features.append(self.rec.get_features(self.obs[t]))
 
         for timestep in xrange(episode_length+1):
+            dummy = True
+            if args.no_dummy and timestep > 0:
+                dummy = False
+
             if timestep < episode_length:
                 def rec_query(state):
                     return self._rec_query(input=scg.concat([state, self.features[timestep]]))
@@ -181,12 +186,13 @@ class VAE(object):
                     return self._rec_strength(input=state)
 
                 rec_response, rec_state = self.set_repr.recognize(self.features, timestep, rec_query,
-                                                                  self.num_steps, strength=rec_strength)
+                                                                  self.num_steps, strength=rec_strength,
+                                                                  dummy=dummy)
 
                 self.z[timestep] = self.rec.recognize(self.features[timestep], scg.concat([rec_response, rec_state]),
                                                       VAE.hidden_name(timestep))
 
-            self.x[timestep] = self.generate(timestep)
+            self.x[timestep] = self.generate(timestep, dummy=dummy)
 
     def generate(self, timestep, dummy=True):
         def prior_query(state):
@@ -362,7 +368,7 @@ with tf.Session() as sess:
         time_step = args.generate
         # num_object = args.generate+1
 
-        obs = vae.generate(time_step, False)
+        obs = vae.generate(time_step, False if args.no_dummy else True)
         if VAE.hidden_name(time_step) in train_samples:
             del train_samples[VAE.hidden_name(time_step)]
         if VAE.observed_name(time_step) in train_samples:
