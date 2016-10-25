@@ -78,17 +78,18 @@ def blackbox_classification(test_data, num_shots, num_classes, classify,
 
         for k in xrange(num_classes):
             ll = score(k)
-            print k, ll, '\n'
             y_hat = ll.argmax()
             if y_hat == k:
                 accuracy += 1
-            else:
+            elif False:
+                print classes[y_hat], classes[k]
                 wrong = np.vstack([test_data[classes[y_hat], idx[y_hat, :-1]], test_data[classes[k], idx[k, -1]]])
                 draw_episode(wrong)
                 right = np.vstack([test_data[classes[k], idx[k, :-1]], test_data[classes[k], idx[k, -1]]])
                 draw_episode(right)
 
         status = 'episode: %d, accuracy: %f' % (episode, accuracy / num_classes / (episode + 1))
-        # sys.stdout.write('\r' + status)
+        # print status
+        sys.stdout.write('\r' + status)
 
     return accuracy / num_episodes / num_classes
