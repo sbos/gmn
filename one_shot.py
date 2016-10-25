@@ -368,7 +368,7 @@ with tf.Session() as sess:
         time_step = args.generate
         # num_object = args.generate+1
 
-        obs = vae.generate(time_step, False)
+        obs = vae.generate(time_step, False if args.no_dummy else True)
         if VAE.hidden_name(time_step) in train_samples:
             del train_samples[VAE.hidden_name(time_step)]
         if VAE.observed_name(time_step) in train_samples:
