@@ -251,10 +251,9 @@ new_data = tf.placeholder(tf.float32, [None, episode_length, data_dim])
 enqueue_op = data_queue.enqueue_many(new_data)
 batch_size = args.batch if args.test is None else args.test
 input_data = data_queue.dequeue_many(batch_size)
-binarized = tf.cast(tf.less_equal(tf.random_uniform(tf.shape(input_data)), input_data), tf.float32)
 
 with tf.variable_scope('model'):
-    vae = VAE(binarized, args.hidden_dim, GenerativeModel, RecognitionModel)
+    vae = VAE(input_data, args.hidden_dim, GenerativeModel, RecognitionModel)
 train_samples = vae.sample(None)
 weights = vae.importance_weights(train_samples)
 
