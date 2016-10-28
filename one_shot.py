@@ -40,8 +40,6 @@ args = parser.parse_args()
 tf.set_random_seed(args.seed)
 np.random.seed(args.seed)
 
-generate_columns = 10
-
 if args.classification is not None:
     args.batch = args.max_classes
     args.episode = args.max_classes * args.shots + 1
@@ -49,8 +47,7 @@ elif args.likelihood_classification is not None:
     args.batch = args.likelihood_classification
     args.episode = args.shots + 1
 elif args.generate is not None:
-    args.episode = args.generate
-    args.batch = generate_columns * args.generate
+    args.batch = args.generate
 
 data_dim = 28*28
 episode_length = args.episode
@@ -364,45 +361,57 @@ with tf.Session() as sess:
     elif args.generate is not None:
         assert args.generate <= episode_length
 
-        time_step = args.generate
+        # time_step = args.generate
         # num_object = args.generate+1
 
-        obs = vae.generate(time_step, False if args.no_dummy else True)
-        if VAE.hidden_name(time_step) in train_samples:
-            del train_samples[VAE.hidden_name(time_step)]
-        if VAE.observed_name(time_step) in train_samples:
-            del train_samples[VAE.observed_name(time_step)]
-        obs.backtrace(train_samples)
+        train_samples.clear()
+        for t in xrange(episode_length+1):
+            # if VAE.hidden_name(t) in train_samples:
+            #     del train_samples[VAE.hidden_name(t)]
+            #     print VAE.hidden_name(t) + ' removed'
+            # if VAE.observed_name(t) + '_logits' in train_samples:
+            #     del train_samples[VAE.observed_name(t) + '_logits']
+            if t < episode_length:
+                train_samples[VAE.observed_name(t)] = input_data[:, t, :]
+            obs = vae.generate(t, False if args.no_dummy and t > 0 else True)
+            obs.backtrace(train_samples, batch=batch_size)
+            # vae.x[t].backtrace(train_samples, batch=batch_size)
 
         data = load_data(args.test_dataset)
         input_batch = np.zeros([batch_size, episode_length, data_dim])
 
-        logits = tf.sigmoid(train_samples[VAE.observed_name(time_step) + '_logit'])
+        logits = []
+        for t in xrange(episode_length+1):
+            logits.append(tf.sigmoid(train_samples[VAE.observed_name(t) + '_logit']))
+        logits = tf.pack(logits)
 
         while True:
             put_new_data(data, input_batch, args.max_classes)
             for j in xrange(1, input_batch.shape[0]):
                 input_batch[j] = input_batch[0]
 
-            f, axs = plt.subplots(1, generate_columns + 1, sharey=True, squeeze=True)
-            conditional_data = input_batch[0, :, :]
-            axs[0].matshow(conditional_data.reshape(conditional_data.shape[0] * 28, 28), cmap=plt.get_cmap('gray'))
-            axs[0].set_yticklabels(())
-            axs[0].set_xticklabels(())
-            plt.subplots_adjust(wspace=0.001)
-            axs[0].axis('off')
+            f, axs = plt.subplots(episode_length+1, args.generate + 1, sharey=True, squeeze=True)
+
+            axs[0, 0].matshow(np.zeros([28, 28]), cmap=plt.get_cmap('gray'))
+            for t in xrange(episode_length):
+                axs[t+1, 0].matshow(input_batch[0, t, :].reshape(28, 28),
+                                  cmap=plt.get_cmap('gray'))
 
             img = sess.run(logits, feed_dict={input_data: input_batch})
-            img = img.reshape(generate_columns, args.generate, data_dim)
-            for t in xrange(generate_columns):
-                ax = axs[t+1]
-                sample = img[t]
-                ax.matshow(sample.reshape(sample.shape[0] * 28, 28), cmap=plt.get_cmap('Greys'))
-                ax.set_yticklabels(())
-                ax.set_xticklabels(())
-                ax.title.set_visible(False)
-                plt.subplots_adjust(wspace=0.001)
-                ax.axis('off')
+
+            for t in xrange(episode_length+1):
+                for k in xrange(batch_size):
+                    sample = img[t, k].reshape(28, 28)
+                    axs[t, k+1].matshow(sample, cmap=plt.get_cmap('Greys'))
+
+            for ax_row in axs:
+                for ax in ax_row:
+                    ax.set_yticklabels(())
+                    ax.set_xticklabels(())
+                    ax.title.set_visible(False)
+                    plt.subplots_adjust(wspace=0.001, hspace=0.001)
+                    ax.axis('off')
+
             plt.show()
             plt.close()
 
