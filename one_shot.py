@@ -10,6 +10,7 @@ from classification import one_shot_classification, cos_sim, blackbox_classifica
 import matplotlib.pyplot as plt
 import numpy as np
 import tensorflow as tf
+from matplotlib import gridspec
 
 import scg
 
@@ -390,7 +391,10 @@ with tf.Session() as sess:
             for j in xrange(1, input_batch.shape[0]):
                 input_batch[j] = input_batch[0]
 
-            f, axs = plt.subplots(episode_length+1, args.generate + 1, sharey=True, squeeze=True)
+            # gs = gridspec.GridSpec(episode_length+1, args.generate + 1)
+            f, axs = plt.subplots(episode_length+1, args.generate + 1,
+                                  sharey=True, sharex=True, squeeze=True,
+                                  figsize=(8, 8))
 
             axs[0, 0].matshow(np.zeros([28, 28]), cmap=plt.get_cmap('gray'))
             for t in xrange(episode_length):
@@ -409,7 +413,7 @@ with tf.Session() as sess:
                     ax.set_yticklabels(())
                     ax.set_xticklabels(())
                     ax.title.set_visible(False)
-                    plt.subplots_adjust(wspace=0.001, hspace=0.001)
+                    plt.subplots_adjust(wspace=0, hspace=0)
                     ax.axis('off')
 
             plt.show()
