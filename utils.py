@@ -82,13 +82,17 @@ class SetRepresentation:
         # assert num_steps > 0
         state = scg.batch_repeat(self.init_state, obs[0])
 
-        if num_steps == 0:
-            return scg.batch_repeat(scg.Concat(tf.zeros([self.input_dim]))(), obs[0]), state
-
         data = obs[:timestep]
         if dummy:
             data += [scg.batch_repeat(self.dummy_obs, state)]
         mem = Memory.build(data)
+
+        if num_steps == 0:
+            def avg(input=None):
+                return tf.reduce_mean(input, 1)
+            r = scg.apply(avg, input=mem)
+            state = self.cell(input=scg.concat([r, state]), state=state)
+            return r, state
 
         r = None
         for step in xrange(num_steps):
