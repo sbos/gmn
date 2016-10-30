@@ -34,6 +34,7 @@ parser.add_argument('--hops', type=int, default=1)
 parser.add_argument('--shots', type=int, default=1)
 parser.add_argument('--likelihood-classification', type=int, default=None)
 parser.add_argument('--no-dummy', action='store_const', const=True)
+parser.add_argument('--classes', type=str, default=None)
 
 
 args = parser.parse_args()
@@ -49,6 +50,9 @@ elif args.likelihood_classification is not None:
     args.episode = args.shots + 1
 elif args.generate is not None:
     args.batch = args.generate
+
+if args.classes is not None:
+    args.classes = np.array(map(int, args.classes.split(' ')))
 
 data_dim = 28*28
 episode_length = args.episode
@@ -360,23 +364,12 @@ with tf.Session() as sess:
         # coord.join(data_threads)
         sys.exit()
     elif args.generate is not None:
-        assert args.generate <= episode_length
-
-        # time_step = args.generate
-        # num_object = args.generate+1
-
         train_samples.clear()
         for t in xrange(episode_length+1):
-            # if VAE.hidden_name(t) in train_samples:
-            #     del train_samples[VAE.hidden_name(t)]
-            #     print VAE.hidden_name(t) + ' removed'
-            # if VAE.observed_name(t) + '_logits' in train_samples:
-            #     del train_samples[VAE.observed_name(t) + '_logits']
             if t < episode_length:
                 train_samples[VAE.observed_name(t)] = input_data[:, t, :]
             obs = vae.generate(t, False if args.no_dummy and t > 0 else True)
             obs.backtrace(train_samples, batch=batch_size)
-            # vae.x[t].backtrace(train_samples, batch=batch_size)
 
         data = load_data(args.test_dataset)
         input_batch = np.zeros([batch_size, episode_length, data_dim])
@@ -387,7 +380,9 @@ with tf.Session() as sess:
         logits = tf.pack(logits)
 
         while True:
-            put_new_data(data, input_batch, args.max_classes)
+            classes = put_new_data(data, input_batch[:1], args.max_classes, classes=args.classes)
+            print 'generating from classes ', classes
+
             for j in xrange(1, input_batch.shape[0]):
                 input_batch[j] = input_batch[0]
 

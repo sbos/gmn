@@ -104,15 +104,17 @@ class SetRepresentation:
         return r, state
 
 
-def put_new_data(data, batch, max_classes):
+def put_new_data(data, batch, max_classes, classes=None):
     import numpy as np
 
-    random_classes = np.random.choice(data.shape[0], [batch.shape[0], max_classes])
-    classes = np.zeros(batch.shape[:2], dtype=np.int64)
+    if classes is None:
+        classes = np.random.choice(data.shape[0], [batch.shape[0], max_classes])
+    else:
+        classes = np.repeat(classes[None, :], batch.shape[0], 0)
 
     for j in xrange(batch.shape[0]):
-        classes[j] = np.random.choice(random_classes[j], batch.shape[1])
-        batch[j] = data[classes[j], np.random.choice(data.shape[1], batch.shape[1])]
+        classes_idx = np.random.choice(classes[j], batch.shape[1])
+        batch[j] = data[classes_idx, np.random.choice(data.shape[1], batch.shape[1])]
 
     np.true_divide(batch, 255., out=batch, casting='unsafe')
     return classes
