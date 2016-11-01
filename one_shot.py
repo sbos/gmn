@@ -244,7 +244,7 @@ class VAE(object):
 
         w = tf.pack(w)
 
-        return w
+        return w, [gen_ll, rec_ll]
 
 
 data_queue = tf.FIFOQueue(1000, tf.float32, shapes=[episode_length, data_dim])
@@ -257,7 +257,21 @@ input_data = data_queue.dequeue_many(batch_size)
 with tf.variable_scope('model'):
     vae = VAE(input_data, args.hidden_dim, GenerativeModel, RecognitionModel)
 train_samples = vae.sample(None)
-weights = vae.importance_weights(train_samples)
+weights, ll = vae.importance_weights(train_samples)
+
+
+def effective_sample_size(gen_ll, rec_ll):
+    w = []
+    for t in xrange(episode_length):
+        w_t = gen_ll[VAE.hidden_name(t)] - rec_ll[VAE.hidden_name(t)]
+        w.append(w_t)
+    w = tf.pack(w)
+    max_w = tf.reduce_max(w, 0)
+    adjusted_w = w - max_w
+    exp_w = tf.exp(adjusted_w)
+    ess = tf.square(tf.reduce_sum(exp_w, 0)) / tf.reduce_sum(tf.square(exp_w), 0)
+
+    return ess
 
 train_pred_lb = predictive_lb(weights)
 train_pred_ll = predictive_ll(weights)
@@ -306,8 +320,9 @@ with tf.Session() as sess:
 
     data_threads = [Thread(target=data_loop, args=[coord]) for i in xrange(1)]
 
-    for t in data_threads:
-        t.start()
+    if args.test is None and args.generate is None:
+        for t in data_threads:
+            t.start()
 
 
     def test(full=False):
@@ -381,7 +396,7 @@ with tf.Session() as sess:
 
         while True:
             classes = put_new_data(data, input_batch[:1], args.max_classes, classes=args.classes)
-            print 'generating from classes ', classes
+            print 'generating classes ', classes
 
             for j in xrange(1, input_batch.shape[0]):
                 input_batch[j] = input_batch[0]
@@ -409,8 +424,10 @@ with tf.Session() as sess:
                     ax.set_xticklabels(())
                     ax.title.set_visible(False)
                     plt.subplots_adjust(wspace=0, hspace=0)
+                    ax.axis('tight')
                     ax.axis('off')
 
+            plt.savefig('samples.pdf', bbox_inches='tight', pad_inches=0.)
             plt.show()
             plt.close()
 

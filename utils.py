@@ -113,10 +113,14 @@ def put_new_data(data, batch, max_classes, classes=None):
         classes = np.repeat(classes[None, :], batch.shape[0], 0)
 
     for j in xrange(batch.shape[0]):
+        # classes_idx = [424, 424, 323, 323, 424, 424, 323, 323, 323, 323]
+        # objects_idx = [4, 11, 2, 6, 18, 19, 0, 3, 10, 13]
+        # classes_idx = [2, 7, 2, 7, 2, 7, 2, 7, 7, 2]
+        # objects_idx = [0, 1, 101, 102, 203, 204, 305, 306, 307, 308]
         classes_idx = np.random.choice(classes[j], batch.shape[1])
-        batch[j] = data[classes_idx, np.random.choice(data.shape[1], batch.shape[1])]
-
-    np.true_divide(batch, 255., out=batch, casting='unsafe')
+        objects_idx = np.random.choice(data.shape[1], batch.shape[1])
+        # print classes_idx, objects_idx
+        batch[j] = data[classes_idx, objects_idx]
     return classes
 
 
@@ -124,13 +128,21 @@ def load_data(path):
     raw_data = np.load(path)
     data = []
     min_size = min([raw_data[f].shape[0] for f in raw_data.files])
+    max_value = max([raw_data[f].max() for f in raw_data.files])
     for cl in raw_data.files:
-        data.append(raw_data[cl][None, :min_size, :])
+        class_data = raw_data[cl][:min_size]
+        class_data = class_data.reshape(min_size, np.prod(class_data.shape[1:]))
+        np.true_divide(class_data, max_value, out=class_data, casting='unsafe')
+        # reverse_data = class_data.copy()
+        # reverse_data[class_data > 0.] = 0.
+        # reverse_data[class_data <= 0.95] = 1.
+        # data.append(reverse_data[None, :, :])
+        data.append(class_data[None, :, :])
     return np.concatenate(data, axis=0)
 
 
 def lower_bound(w):
-    return tf.reduce_sum(tf.reduce_mean(w, 1))
+    return tf.reduce_mean(tf.reduce_sum(w, 0))
 
 
 def predictive_lb(w):
