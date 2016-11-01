@@ -69,9 +69,9 @@ class GenerativeModel:
 
         self.h0 = scg.Affine(hidden_dim + state_dim, 3*3*32, fun=None, init=scg.he_normal)
         self.h1 = ResNet.section([3, 3, 32], [2, 2], 32, 2, [2, 2], downscale=False)
-        self.h2 = ResNet.section([6, 6, 32], [3, 3], 16, 2, [3, 3], downscale=False)
-        self.h3 = ResNet.section([13, 13, 16], [4, 4], 8, 2, [3, 3], downscale=False)
-        self.conv = scg.Convolution2d([28, 28, 8], [1, 1], 1, padding='VALID',
+        self.h2 = ResNet.section([6, 6, 32], [3, 3], 32, 2, [3, 3], downscale=False)
+        self.h3 = ResNet.section([13, 13, 32], [4, 4], 32, 2, [3, 3], downscale=False)
+        self.conv = scg.Convolution2d([28, 28, 32], [1, 1], 1, padding='VALID',
                                       init=scg.he_normal)
 
     def generate_prior(self, state, hidden_name):
@@ -98,8 +98,8 @@ class RecognitionModel:
 
         self.init = scg.norm_init(scg.he_normal)
 
-        self.h1 = ResNet.section([28, 28, 1], [4, 4], 16, 2, [3, 3])
-        self.h2 = ResNet.section([13, 13, 16], [3, 3], 32, 2, [3, 3])
+        self.h1 = ResNet.section([28, 28, 1], [4, 4], 32, 2, [3, 3])
+        self.h2 = ResNet.section([13, 13, 32], [3, 3], 32, 2, [3, 3])
         self.h3 = ResNet.section([6, 6, 32], [2, 2], 32, 2, [2, 2])
 
         self.features_dim = 3 * 3 * 32  # np.prod(self.h3.shape)
@@ -139,26 +139,27 @@ class VAE(object):
         state_dim = 200
         self.num_steps = args.hops
         self.prior_steps = args.prior_hops
+        self.matching_dim = 200
 
         with tf.variable_scope('recognition') as vs:
             self.rec = rec(hidden_dim, state_dim + 288)
             self.features_dim = self.rec.features_dim
-            self._rec_query = scg.Affine(state_dim + self.features_dim, self.features_dim,
+            self._rec_query = scg.Affine(state_dim + self.features_dim, self.matching_dim,
                                          fun='prelu', init=scg.norm_init(scg.he_normal))
             self._rec_strength = scg.Affine(state_dim, 1, init=scg.norm_init(scg.he_normal))
 
         with tf.variable_scope('generation') as vs:
             self.gen = gen(hidden_dim, state_dim + self.features_dim)
-            self._gen_query = scg.Affine(state_dim + hidden_dim, self.features_dim,
+            self._gen_query = scg.Affine(state_dim + hidden_dim, self.matching_dim,
                                          fun='prelu', init=scg.norm_init(scg.he_normal))
             self._gen_strength = scg.Affine(state_dim, 1, init=scg.norm_init(scg.he_normal))
 
-            self._prior_query = scg.Affine(state_dim, self.features_dim, fun='prelu', init=scg.norm_init(scg.he_normal))
+            self._prior_query = scg.Affine(state_dim, self.matching_dim, fun='prelu', init=scg.norm_init(scg.he_normal))
             self._prior_strength = scg.Affine(state_dim, 1, init=scg.norm_init(scg.he_normal))
-            self.prior_repr = SetRepresentation(self.features_dim, state_dim)
+            self.prior_repr = SetRepresentation(self.features_dim, self.matching_dim, state_dim)
 
         with tf.variable_scope('both') as vs:
-            self.set_repr = SetRepresentation(self.features_dim, state_dim)
+            self.set_repr = SetRepresentation(self.features_dim, self.matching_dim, state_dim)
 
         self.z = [None] * episode_length
         self.x = [None] * (episode_length+1)

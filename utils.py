@@ -16,6 +16,7 @@ class ResNet:
             y = x
             # y = conv1(input=x)
             return f(input=scg.add(x, conv2(input=y)))
+
         return _apply
 
     @staticmethod
@@ -31,12 +32,15 @@ class ResNet:
             scale = scg.Convolution2d(input_shape, [1, 1], scale_filters,
                                       padding='VALID', init=init,
                                       transpose=False if downscale else True)
-            if downscale:
-                pool = scg.Pooling(scale.shape, scale_kernel, [stride, stride])
-            if not downscale:
-                pool = scg.ResizeImage(scale.shape, float(conv.shape[0]) / float(scale.shape[0]))
 
-        blocks = [ResNet.res_block(conv.shape, block_kernel, scale_filters, init=init) for l in xrange(num_blocks-1)]
+            scaled_shape = input_shape[:2] + [scale_filters]
+
+            if downscale:
+                pool = scg.Pooling(scaled_shape, scale_kernel, [stride, stride])
+            if not downscale:
+                pool = scg.ResizeImage(scaled_shape, float(conv.shape[0]) / float(scaled_shape[0]))
+
+        blocks = [ResNet.res_block(conv.shape, block_kernel, scale_filters, init=init) for l in xrange(num_blocks - 1)]
         blocks.append(ResNet.res_block(conv.shape, block_kernel, scale_filters, init=init, lastfun=lastfun))
 
         def _apply(x):
@@ -64,19 +68,24 @@ class Memory:
 
 
 class SetRepresentation:
-    def __init__(self, input_dim, hidden_dim):
-        self.input_dim = input_dim
+    def __init__(self, proto_dim, matching_dim, hidden_dim):
+        self.proto_dim = proto_dim
+        self.matching_dim = matching_dim
         self.hidden_dim = hidden_dim
 
-        self.cell = scg.GRU(input_dim + hidden_dim, hidden_dim, fun='prelu', init=scg.he_normal)
+        self.cell = scg.GRU(proto_dim + hidden_dim, hidden_dim, fun='prelu', init=scg.he_normal)
 
-        self.dummy_obs = scg.Constant(tf.Variable(tf.random_uniform([input_dim],
-                                                                    minval=-1. / input_dim,
-                                                                    maxval=1. / input_dim), trainable=True))()
+        self.dummy_proto = scg.Constant(tf.Variable(tf.random_uniform([proto_dim],
+                                                                      minval=-1. / proto_dim,
+                                                                      maxval=1. / proto_dim), trainable=True))()
+        self.dummy_match = scg.Constant(tf.Variable(tf.random_uniform([matching_dim],
+                                                                      minval=-1. / proto_dim,
+                                                                      maxval=1. / proto_dim), trainable=True))()
         # self.dummy_obs = scg.Constant(tf.Variable(tf.ones([input_dim]), trainable=True))()
         self.init_state = scg.Constant(tf.Variable(tf.random_uniform([hidden_dim],
-                                                                     minval=-1. / input_dim, maxval=1. / input_dim),
+                                                                     minval=-1. / proto_dim, maxval=1. / proto_dim),
                                                    trainable=True))()
+        self.match = scg.Affine(self.proto_dim, self.matching_dim, fun='prelu', init=scg.he_normal)
 
     def recognize(self, obs, timestep, query, num_steps, dummy=True, strength=lambda state: 1.):
         # assert num_steps > 0
@@ -84,21 +93,27 @@ class SetRepresentation:
 
         data = obs[:timestep]
         if dummy:
-            data += [scg.batch_repeat(self.dummy_obs, state)]
-        mem = Memory.build(data)
+            data += [scg.batch_repeat(self.dummy_proto, state)]
+        proto_mem = Memory.build(data)
+
+        data = [self.match(input=obs[t]) for t in xrange(timestep)]
+        if dummy:
+            data += [scg.batch_repeat(self.dummy_match, state)]
+        match_mem = Memory.build(data)
 
         if num_steps == 0:
             def avg(input=None):
                 return tf.reduce_mean(input, 1)
-            r = scg.apply(avg, input=mem)
+
+            r = scg.apply(avg, input=proto_mem)
             state = self.cell(input=scg.concat([r, state]), state=state)
             return r, state
 
         r = None
         for step in xrange(num_steps):
             q = query(state)
-            a = scg.Attention()(mem=mem, key=q, strength=strength(state))
-            r = scg.AttentiveReader()(attention=a, mem=mem)
+            a = scg.Attention()(mem=match_mem, key=q, strength=strength(state))
+            r = scg.AttentiveReader()(attention=a, mem=proto_mem)
             state = self.cell(input=scg.concat([r, state]), state=state)
 
         return r, state
