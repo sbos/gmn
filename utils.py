@@ -68,20 +68,25 @@ class Memory:
 
 
 class SetRepresentation:
-    def __init__(self, proto_dim, matching_dim, hidden_dim):
+    def __init__(self, proto_dim, matching_dim, hidden_dim, num_dummies=3):
         self.proto_dim = proto_dim
         self.matching_dim = matching_dim
         self.hidden_dim = hidden_dim
 
         self.cell = scg.GRU(proto_dim + hidden_dim, hidden_dim, fun='prelu', init=scg.he_normal)
 
-        self.dummy_proto = scg.Constant(tf.Variable(tf.random_uniform([proto_dim],
-                                                                      minval=-1. / proto_dim,
-                                                                      maxval=1. / proto_dim), trainable=True))()
-        self.dummy_match = scg.Constant(tf.Variable(tf.random_uniform([matching_dim],
-                                                                      minval=-1. / proto_dim,
-                                                                      maxval=1. / proto_dim), trainable=True))()
-        # self.dummy_obs = scg.Constant(tf.Variable(tf.ones([input_dim]), trainable=True))()
+        self.dummy_match = []
+        self.dummy_proto = []
+        for i in xrange(num_dummies):
+            self.dummy_proto.append(scg.Constant(tf.Variable(tf.random_uniform([proto_dim],
+                                                                               minval=-1. / proto_dim,
+                                                                               maxval=1. / proto_dim),
+                                                             trainable=True))())
+            self.dummy_match.append(scg.Constant(tf.Variable(tf.random_uniform([matching_dim],
+                                                                               minval=-1. / proto_dim,
+                                                                               maxval=1. / proto_dim),
+                                                             trainable=True))())
+
         self.init_state = scg.Constant(tf.Variable(tf.random_uniform([hidden_dim],
                                                                      minval=-1. / proto_dim, maxval=1. / proto_dim),
                                                    trainable=True))()
@@ -93,12 +98,12 @@ class SetRepresentation:
 
         data = obs[:timestep]
         if dummy:
-            data += [scg.batch_repeat(self.dummy_proto, state)]
+            data += [scg.batch_repeat(dummy, state) for dummy in self.dummy_proto]
         proto_mem = Memory.build(data)
 
         data = [self.match(input=obs[t]) for t in xrange(timestep)]
         if dummy:
-            data += [scg.batch_repeat(self.dummy_match, state)]
+            data += [scg.batch_repeat(dummy, state) for dummy in self.dummy_match]
         match_mem = Memory.build(data)
 
         if num_steps == 0:
