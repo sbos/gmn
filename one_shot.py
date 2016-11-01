@@ -145,16 +145,16 @@ class VAE(object):
             self.rec = rec(hidden_dim, state_dim + 288)
             self.features_dim = self.rec.features_dim
             self._rec_query = scg.Affine(state_dim + self.features_dim, self.matching_dim,
-                                         fun='prelu', init=scg.norm_init(scg.he_normal))
+                                         fun=None, init=scg.norm_init(scg.he_normal))
             self._rec_strength = scg.Affine(state_dim, 1, init=scg.norm_init(scg.he_normal))
 
         with tf.variable_scope('generation') as vs:
             self.gen = gen(hidden_dim, state_dim + self.features_dim)
             self._gen_query = scg.Affine(state_dim + hidden_dim, self.matching_dim,
-                                         fun='prelu', init=scg.norm_init(scg.he_normal))
+                                         fun=None, init=scg.norm_init(scg.he_normal))
             self._gen_strength = scg.Affine(state_dim, 1, init=scg.norm_init(scg.he_normal))
 
-            self._prior_query = scg.Affine(state_dim, self.matching_dim, fun='prelu', init=scg.norm_init(scg.he_normal))
+            self._prior_query = scg.Affine(state_dim, self.matching_dim, fun=None, init=scg.norm_init(scg.he_normal))
             self._prior_strength = scg.Affine(state_dim, 1, init=scg.norm_init(scg.he_normal))
             self.prior_repr = SetRepresentation(self.features_dim, self.matching_dim, state_dim)
 
