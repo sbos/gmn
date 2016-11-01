@@ -68,7 +68,7 @@ class Memory:
 
 
 class SetRepresentation:
-    def __init__(self, proto_dim, matching_dim, hidden_dim, num_dummies=3):
+    def __init__(self, proto_dim, matching_dim, hidden_dim, num_dummies=1):
         self.proto_dim = proto_dim
         self.matching_dim = matching_dim
         self.hidden_dim = hidden_dim

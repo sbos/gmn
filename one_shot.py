@@ -70,8 +70,8 @@ class GenerativeModel:
         self.h0 = scg.Affine(hidden_dim + state_dim, 3*3*32, fun=None, init=scg.he_normal)
         self.h1 = ResNet.section([3, 3, 32], [2, 2], 32, 2, [2, 2], downscale=False)
         self.h2 = ResNet.section([6, 6, 32], [3, 3], 32, 2, [3, 3], downscale=False)
-        self.h3 = ResNet.section([13, 13, 32], [4, 4], 32, 2, [3, 3], downscale=False)
-        self.conv = scg.Convolution2d([28, 28, 32], [1, 1], 1, padding='VALID',
+        self.h3 = ResNet.section([13, 13, 32], [4, 4], 16, 2, [3, 3], downscale=False)
+        self.conv = scg.Convolution2d([28, 28, 16], [1, 1], 1, padding='VALID',
                                       init=scg.he_normal)
 
     def generate_prior(self, state, hidden_name):
@@ -98,8 +98,8 @@ class RecognitionModel:
 
         self.init = scg.norm_init(scg.he_normal)
 
-        self.h1 = ResNet.section([28, 28, 1], [4, 4], 32, 2, [3, 3])
-        self.h2 = ResNet.section([13, 13, 32], [3, 3], 32, 2, [3, 3])
+        self.h1 = ResNet.section([28, 28, 1], [4, 4], 16, 2, [3, 3])
+        self.h2 = ResNet.section([13, 13, 16], [3, 3], 32, 2, [3, 3])
         self.h3 = ResNet.section([6, 6, 32], [2, 2], 32, 2, [2, 2])
 
         self.features_dim = 3 * 3 * 32  # np.prod(self.h3.shape)
