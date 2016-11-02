@@ -68,12 +68,12 @@ def blackbox_classification(test_data, num_shots, num_classes, classify,
         idx = np.vstack(idx)
 
         def score(k):
-            batch[0, :-1, :] = test_data[classes[k], idx[k, :-1]]
+            batch[:, -1, :] = test_data[classes[k], idx[k, -1]]
             for j in xrange(1, batch.shape[0]):
                 batch[j] = batch[0]
             scores = np.zeros(num_classes)
             for c in xrange(num_classes):
-                batch[:, -1, :] = test_data[classes[c], idx[c, -1]]
+                batch[:, :-1, :] = test_data[classes[c], idx[c, :-1]]
                 scores[c] = classify(batch)
             return scores
 
