@@ -133,11 +133,11 @@ def load_data(path):
         class_data = raw_data[cl][:min_size]
         class_data = class_data.reshape(min_size, np.prod(class_data.shape[1:]))
         np.true_divide(class_data, max_value, out=class_data, casting='unsafe')
-        reverse_data = class_data.copy()
-        reverse_data[class_data > 0.] = 0.
-        reverse_data[class_data <= 0.95] = 1.
-        data.append(reverse_data[None, :, :])
-        # data.append(class_data[None, :, :])
+        # reverse_data = class_data.copy()
+        # reverse_data[class_data > 0.] = 0.
+        # reverse_data[class_data <= 0.95] = 1.
+        # data.append(reverse_data[None, :, :])
+        data.append(class_data[None, :, :])
     return np.concatenate(data, axis=0)
 
 

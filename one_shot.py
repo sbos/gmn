@@ -334,7 +334,7 @@ with tf.Session() as sess:
 
     data_threads = [Thread(target=data_loop, args=[coord]) for i in xrange(1)]
 
-    if args.test is None and args.generate is None:
+    if args.test is None and args.generate is None and args.classification is None and args.likelihood_classification is None:
         for t in data_threads:
             t.start()
 
@@ -488,13 +488,14 @@ with tf.Session() as sess:
         test_data = load_data(args.test_dataset)
         # prediction = likelihood_classification(weights[-1], args.max_classes,
         #                                        args.likelihood_classification)
-        prediction = predictive_ll(weights)[-1]
+        prediction = train_pred_ll[-1]
 
         def classify(batch):
             return sess.run(prediction, feed_dict={input_data: batch})
 
         accuracy = blackbox_classification(test_data, args.shots, args.max_classes,
                                            classify, args.test_episodes, args.likelihood_classification)
+        print
         print 'accuracy: ', accuracy
 
         sys.exit()
