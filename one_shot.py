@@ -35,6 +35,7 @@ parser.add_argument('--shots', type=int, default=1)
 parser.add_argument('--likelihood-classification', type=int, default=None)
 parser.add_argument('--no-dummy', action='store_const', const=True)
 parser.add_argument('--classes', type=str, default=None)
+parser.add_argument('--conditional', action='store_const', const=True)
 
 
 args = parser.parse_args()
@@ -53,6 +54,10 @@ elif args.generate is not None:
 
 if args.classes is not None:
     args.classes = np.array(map(int, args.classes.split(' ')))
+
+start_from = args.episode
+if args.conditional is not None:
+    start_from = args.max_classes
 
 data_dim = 28*28
 episode_length = args.episode
@@ -277,7 +282,7 @@ def effective_sample_size(gen_ll, rec_ll):
 train_pred_lb = predictive_lb(weights)
 train_pred_ll = predictive_ll(weights)
 
-vlb_gen = lower_bound(weights)
+vlb_gen = lower_bound(weights, start_from)
 
 global_step = tf.Variable(0, trainable=False)
 learning_rate = tf.placeholder(tf.float32)
@@ -308,7 +313,7 @@ with tf.Session() as sess:
         # test_data = np.load('data/test_small.npz')
 
         while coordinator is None or not coordinator.should_stop():
-            put_new_data(train_data, batch, args.max_classes)
+            put_new_data(train_data, batch, args.max_classes, conditional=args.conditional)
             sess.run(enqueue_op, feed_dict={new_data: batch})
 
     coord = tf.train.Coordinator()
@@ -335,11 +340,11 @@ with tf.Session() as sess:
 
         for j in xrange(args.test_episodes):
             if full:
-                put_new_data(test_data, batch_data[:1, :, :], args.max_classes)
+                put_new_data(test_data, batch_data[:1, :, :], args.max_classes, conditional=args.conditional)
                 for t in xrange(1, batch_data.shape[0]):
                     batch_data[t] = batch_data[0]
             else:
-                put_new_data(test_data, batch_data[:, :, :], args.max_classes)
+                put_new_data(test_data, batch_data[:, :, :], args.max_classes, conditional=args.conditional)
 
             pred_ll = sess.run(target, feed_dict={input_data: batch_data})
             avg_predictive_ll += (pred_ll - avg_predictive_ll) / (j+1)
@@ -396,7 +401,8 @@ with tf.Session() as sess:
         logits = tf.pack(logits)
 
         while True:
-            classes = put_new_data(data, input_batch[:1], args.max_classes, classes=args.classes)
+            classes = put_new_data(data, input_batch[:1], args.max_classes,
+                                   classes=args.classes, conditional=args.conditional)
             print 'generating classes ', classes
 
             for j in xrange(1, input_batch.shape[0]):

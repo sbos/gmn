@@ -124,7 +124,7 @@ class SetRepresentation:
         return r, state
 
 
-def put_new_data(data, batch, max_classes, classes=None):
+def put_new_data(data, batch, max_classes, classes=None, conditional=False):
     import numpy as np
 
     if classes is None:
@@ -137,7 +137,10 @@ def put_new_data(data, batch, max_classes, classes=None):
         # objects_idx = [4, 11, 2, 6, 18, 19, 0, 3, 10, 13]
         # classes_idx = [2, 7, 2, 7, 2, 7, 2, 7, 7, 2]
         # objects_idx = [0, 1, 101, 102, 203, 204, 305, 306, 307, 308]
-        classes_idx = np.random.choice(classes[j], batch.shape[1])
+        if not conditional:
+            classes_idx = np.random.choice(classes[j], batch.shape[1])
+        else:
+            classes_idx = np.concatenate([classes[j], np.random.choice(classes[j], batch.shape[1] - max_classes)])
         objects_idx = np.random.choice(data.shape[1], batch.shape[1])
         # print classes_idx, objects_idx
         batch[j] = data[classes_idx, objects_idx]
@@ -161,8 +164,8 @@ def load_data(path):
     return np.concatenate(data, axis=0)
 
 
-def lower_bound(w):
-    return tf.reduce_mean(tf.reduce_sum(w, 0))
+def lower_bound(w, start_from=0):
+    return tf.reduce_mean(tf.reduce_sum(w[start_from:, :], 0))
 
 
 def predictive_lb(w):
