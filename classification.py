@@ -31,7 +31,7 @@ def one_shot_classification(test_data, num_shots, num_classes, compute_similarit
         batch[:, :-1, :] = test_data[classes_idx, idx[:, :-1].flatten(), :]
         batch[:,  -1, :] = test_data[classes,     idx[:,  -1].flatten(), :]
 
-        np.true_divide(batch, 255., out=batch, casting='unsafe')
+        # np.true_divide(batch, 255., out=batch, casting='unsafe')
 
         # sim[i, j] -- similarity between batch[i, -1] and batch[i, j]
         sim = compute_similarities(batch)
@@ -47,6 +47,7 @@ def one_shot_classification(test_data, num_shots, num_classes, compute_similarit
 
         status = 'episode: %d, accuracy: %f' % (episode, accuracy / num_classes / (episode + 1))
         sys.stdout.write('\r' + status)
+        sys.stdout.flush()
 
     return accuracy / num_episodes / num_classes
 
@@ -67,13 +68,13 @@ def blackbox_classification(test_data, num_shots, num_classes, classify,
         idx = np.vstack(idx)
 
         def score(k):
-            batch[0, :-1, :] = test_data[classes[k], idx[k, :-1]]
+            batch[:, -1, :] = test_data[classes[k], idx[k, -1]]
             for j in xrange(1, batch.shape[0]):
                 batch[j] = batch[0]
             scores = np.zeros(num_classes)
             for c in xrange(num_classes):
-                batch[:, -1, :] = test_data[classes[c], idx[c, -1]]
-                scores[c] = classify(batch / 255.)
+                batch[:, :-1, :] = test_data[classes[c], idx[c, :-1]]
+                scores[c] = classify(batch)
             return scores
 
         for k in xrange(num_classes):
@@ -89,7 +90,7 @@ def blackbox_classification(test_data, num_shots, num_classes, classify,
                 draw_episode(right)
 
         status = 'episode: %d, accuracy: %f' % (episode, accuracy / num_classes / (episode + 1))
-        # print status
         sys.stdout.write('\r' + status)
+        sys.stdout.flush()
 
     return accuracy / num_episodes / num_classes

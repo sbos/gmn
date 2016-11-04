@@ -36,6 +36,7 @@ parser.add_argument('--likelihood-classification', type=int, default=None)
 parser.add_argument('--no-dummy', action='store_const', const=True)
 parser.add_argument('--classes', type=str, default=None)
 parser.add_argument('--conditional', action='store_const', const=True)
+parser.add_argument('--prior-entropy', action='store_const', const=True)
 
 
 args = parser.parse_args()
@@ -51,6 +52,8 @@ elif args.likelihood_classification is not None:
     args.episode = args.shots + 1
 elif args.generate is not None:
     args.batch = args.generate
+elif args.prior_entropy:
+    args.batch = 1
 
 if args.classes is not None:
     args.classes = np.array(map(int, args.classes.split(' ')))
@@ -58,6 +61,7 @@ if args.classes is not None:
 start_from = args.episode
 if args.conditional is not None:
     start_from = args.max_classes
+    args.no_dummy = True
 
 data_dim = 28*28
 episode_length = args.episode
@@ -279,8 +283,19 @@ def effective_sample_size(gen_ll, rec_ll):
 
     return ess
 
+
+def entropy(samples):
+    result = []
+    for t in xrange(episode_length):
+        sigma = tf.nn.softplus(tf.clip_by_value(samples[VAE.hidden_name(t) + '_prior_sigma'], -10., 10.))
+        h = 0.5 * (1. + np.log(np.pi) + np.log(2.) + 2 * tf.log(sigma))
+        result.append(tf.reduce_sum(h))
+        # result.append(tf.reduce_mean(sigma))
+    return tf.pack(result)
+
 train_pred_lb = predictive_lb(weights)
 train_pred_ll = predictive_ll(weights)
+prior_entropy = entropy(train_samples)
 
 vlb_gen = lower_bound(weights, start_from)
 
@@ -326,7 +341,7 @@ with tf.Session() as sess:
 
     data_threads = [Thread(target=data_loop, args=[coord]) for i in xrange(1)]
 
-    if args.test is None and args.generate is None:
+    if args.test is None and args.generate is None and args.classification is None and args.likelihood_classification is None:
         for t in data_threads:
             t.start()
 
@@ -337,6 +352,8 @@ with tf.Session() as sess:
         batch_data = np.zeros((batch_size, episode_length, data_dim), dtype=np.float32)
 
         target = train_pred_lb if not full else train_pred_ll
+        if args.prior_entropy:
+            target = prior_entropy
 
         for j in xrange(args.test_episodes):
             if full:
@@ -350,6 +367,8 @@ with tf.Session() as sess:
             avg_predictive_ll += (pred_ll - avg_predictive_ll) / (j+1)
 
             msg = '\rtesting %d' % j
+            if args.prior_entropy:
+                msg = '\rentropy %d' % j
             for t in xrange(episode_length):
                 msg += ' %.2f' % avg_predictive_ll[t]
             sys.stdout.write(msg)
@@ -477,13 +496,14 @@ with tf.Session() as sess:
         test_data = load_data(args.test_dataset)
         # prediction = likelihood_classification(weights[-1], args.max_classes,
         #                                        args.likelihood_classification)
-        prediction = predictive_ll(weights)[-1]
+        prediction = train_pred_ll[-1]
 
         def classify(batch):
             return sess.run(prediction, feed_dict={input_data: batch})
 
         accuracy = blackbox_classification(test_data, args.shots, args.max_classes,
                                            classify, args.test_episodes, args.likelihood_classification)
+        print
         print 'accuracy: ', accuracy
 
         sys.exit()
