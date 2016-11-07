@@ -78,8 +78,8 @@ class GenerativeModel:
 
         self.h0 = scg.Affine(hidden_dim + state_dim, 3*3*32, fun=None, init=scg.he_normal)
         self.h1 = ResNet.section([3, 3, 32], [2, 2], 32, 2, [2, 2], downscale=False)
-        self.h2 = ResNet.section([6, 6, 32], [3, 3], 32, 2, [3, 3], downscale=False)
-        self.h3 = ResNet.section([13, 13, 32], [4, 4], 16, 2, [3, 3], downscale=False)
+        self.h2 = ResNet.section([6, 6, 32], [3, 3], 16, 2, [3, 3], downscale=False)
+        self.h3 = ResNet.section([13, 13, 16], [4, 4], 16, 2, [3, 3], downscale=False)
         self.conv = scg.Convolution2d([28, 28, 16], [1, 1], 1, padding='VALID',
                                       init=scg.he_normal)
 
@@ -517,7 +517,7 @@ with tf.Session() as sess:
                 continue
 
             epoch_started = time.time()
-            total_batches = 24345 / batch_size / episode_length
+            total_batches = 24345 / batch_size / 10  # episode_length
             for batch in xrange(total_batches):
                 pred_lb, i, _ = sess.run([train_pred_lb, global_step, train_op],
                                          feed_dict={learning_rate: lr})
