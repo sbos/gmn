@@ -58,7 +58,7 @@ elif args.prior_entropy:
 if args.classes is not None:
     args.classes = np.array(map(int, args.classes.split(' ')))
 
-start_from = args.episode
+start_from = 0
 if args.conditional is not None:
     start_from = args.max_classes
     args.no_dummy = True
