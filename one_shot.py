@@ -441,8 +441,11 @@ with tf.Session() as sess:
 
             for t in xrange(episode_length+1):
                 for k in xrange(batch_size):
-                    sample = img[t, k].reshape(28, 28)
-                    axs[t, k+1].matshow(sample, cmap=plt.get_cmap('Greys'))
+                    if args.conditional and t < args.max_classes:
+                        axs[t, k+1].matshow(np.zeros([28, 28]), cmap=plt.get_cmap('gray'))
+                    else:
+                        sample = img[t, k].reshape(28, 28)
+                        axs[t, k+1].matshow(sample, cmap=plt.get_cmap('Greys'))
 
             for ax_row in axs:
                 for ax in ax_row:

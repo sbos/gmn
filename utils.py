@@ -133,7 +133,7 @@ def put_new_data(data, batch, max_classes, classes=None, conditional=False):
         classes = np.repeat(classes[None, :], batch.shape[0], 0)
 
     for j in xrange(batch.shape[0]):
-        # classes_idx = [424, 424, 323, 323, 424, 424, 323, 323, 323, 323]
+        # classes_idx = [424, 323, 323, 323, 424, 424, 323, 323, 323, 323]
         # objects_idx = [4, 11, 2, 6, 18, 19, 0, 3, 10, 13]
         # classes_idx = [2, 7, 2, 7, 2, 7, 2, 7, 7, 2]
         # objects_idx = [0, 1, 101, 102, 203, 204, 305, 306, 307, 308]
