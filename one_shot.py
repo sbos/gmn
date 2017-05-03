@@ -441,7 +441,7 @@ with tf.Session() as sess:
 
             for t in xrange(episode_length+1):
                 for k in xrange(batch_size):
-                    if args.conditional and t < args.max_classes:
+                    if args.conditional and t <= args.max_classes:
                         axs[t, k+1].matshow(np.zeros([28, 28]), cmap=plt.get_cmap('gray'))
                     else:
                         sample = img[t, k].reshape(28, 28)
@@ -471,6 +471,11 @@ with tf.Session() as sess:
 
         sim = np.zeros([args.max_classes, episode_length - 1])
 
+        def raw_similarities(batch):
+            features = np.vstack([batch[:, -1, :], batch[0, :-1, :]])
+            sim = cos_sim(features)
+            return sim[:, args.max_classes:]
+
         def compute_similarities(batch):
             batch_mu = sess.run(mu, feed_dict={input_data: batch})
             train_mu = batch_mu[:-1, 0, :]
@@ -490,7 +495,8 @@ with tf.Session() as sess:
                                            compute_similarities, k_neighbours=args.classification,
                                            num_episodes=args.test_episodes)
 
-        print 'accuracy: ', accuracy
+        print
+        log.info('accuracy: %f' % accuracy)
 
         coord.request_stop()
         # coord.join(data_threads)
@@ -507,7 +513,7 @@ with tf.Session() as sess:
         accuracy = blackbox_classification(test_data, args.shots, args.max_classes,
                                            classify, args.test_episodes, args.likelihood_classification)
         print
-        print 'accuracy: ', accuracy
+        log.info('accuracy: %f' % accuracy)
 
         sys.exit()
 

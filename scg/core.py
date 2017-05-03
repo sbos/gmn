@@ -6,9 +6,14 @@ import string
 name_random = random.Random()
 name_random.seed(0)
 
+used_names = set()
+
 
 def id_generator(size=6, chars=string.ascii_uppercase + string.digits):
-    return ''.join(name_random.choice(chars) for _ in range(size))
+    new_name = ''.join(name_random.choice(chars) for _ in range(size))
+    assert new_name not in used_names
+    used_names.add(new_name)
+    return new_name
 
 
 class Node(object):

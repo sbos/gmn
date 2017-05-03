@@ -127,6 +127,9 @@ class SetRepresentation:
 def put_new_data(data, batch, max_classes, classes=None, conditional=False):
     import numpy as np
 
+    if max_classes == -1:
+        max_classes = data.shape[0]
+
     if classes is None:
         classes = np.random.choice(data.shape[0], [batch.shape[0], max_classes])
     else:
